@@ -77,6 +77,33 @@
     return (h ^ h >>> 16) >>> 0;
   }
 
+  // ── Bruit déterministe (value-noise + fbm) -> eau (lacs + rivières) ───────
+  function vnHash(ix, iy) {
+    var h = Math.imul(ix | 0, 374761393) + Math.imul(iy | 0, 668265263) | 0;
+    h = Math.imul(h ^ h >>> 13, 1274126177);
+    return ((h ^ h >>> 16) >>> 0) / 4294967296;
+  }
+  function vnSmooth(t) { return t * t * (3 - 2 * t); }
+  function valueNoise(x, y) {
+    var x0 = Math.floor(x), y0 = Math.floor(y), xf = x - x0, yf = y - y0;
+    var v00 = vnHash(x0, y0), v10 = vnHash(x0 + 1, y0), v01 = vnHash(x0, y0 + 1), v11 = vnHash(x0 + 1, y0 + 1);
+    var u = vnSmooth(xf), v = vnSmooth(yf);
+    return (v00 * (1 - u) + v10 * u) * (1 - v) + (v01 * (1 - u) + v11 * u) * v;
+  }
+  function fbm(x, y) {
+    var t = 0, amp = 0.5, f = 1;
+    for (var i = 0; i < 4; i++) { t += valueNoise(x * f, y * f) * amp; f *= 2; amp *= 0.5; }
+    return t;
+  }
+  // Eau = grands lacs (bruit basse fréquence) + rivières sinueuses (contour d'un
+  // autre bruit). La maison (0,0) reste au sec pour ne pas démarrer sur l'eau.
+  function isWater(x, y) {
+    if ((x - HOME.x) * (x - HOME.x) + (y - HOME.y) * (y - HOME.y) < 360 * 360) return false;
+    if (fbm(x / 520 + 7.3, y / 520 + 2.1) < 0.31) return true;                     // lacs
+    if (Math.abs(fbm(x / 760 + 50.5, y / 760 - 30.2) - 0.5) < 0.02) return true;   // rivières
+    return false;
+  }
+
   // ── Assets dessinés à la main (détourés de la photo de Charlie) ──────────
   var ASSETS = {
     treeA: 'assets/tree_left.png',
@@ -98,6 +125,7 @@
     heroPack: 'assets/hero_pack.png',   // sac à dos + matelas rose
     heroShoes: 'assets/hero_shoes.png',
     heroArm: 'assets/hero_arm.png',     // même bras pour l'avant et l'arrière
+    boat: 'assets/boat.png',            // voilier dessiné par Elaijah (voile rose + emblème croco)
   };
   var IMG = {};
   Object.keys(ASSETS).forEach(function (k) { var im = new Image(); im.src = ASSETS[k]; IMG[k] = im; });
@@ -115,6 +143,7 @@
       var x = (cx + rnd()) * CHUNK, y = (cy + rnd()) * CHUNK;
       var isTree = rnd() < 0.62, tv = rnd(), pick = rnd();
       if (Math.hypot(x - HOME.x, y - HOME.y) < HOME_CLEAR) continue; // dégager la maison
+      if (isWater(x, y)) continue; // pas de décor sur l'eau
       var id = cx + '_' + cy + '_' + i;
       if (removedTrees[id]) continue;
       var key = isTree ? (tv < 0.4 ? 'treeA' : (tv < 0.76 ? 'treeB' : 'treeC')) // ~24% = arbre d'Elaijah
@@ -210,6 +239,21 @@
       });
     }
   }
+  // Éclaboussures (bascule terre<->eau) : gouttelettes bleutées qui giclent.
+  function spawnSplash(wx, wy, n) {
+    var cols = ['#bfe3f5', '#8fc7ea', '#6fb0dd', '#dff2fc'];
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 45 + Math.random() * 150;
+      parts.push({
+        x: wx, y: wy,
+        vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 60 - Math.random() * 90,
+        life: 0.3 + Math.random() * 0.35, t: 0,
+        c: cols[(Math.random() * cols.length) | 0],
+        w: 2 + Math.random() * 2.6, h: 2 + Math.random() * 2.6,
+        rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 11
+      });
+    }
+  }
 
   // ── Audio (WebAudio) : slots de sons nommés, décodés une fois ────────────
   // Un fichier manquant => slot vide => no-op : on peut brancher les sons de
@@ -297,6 +341,10 @@
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
   var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
+  var hasBoat = true;   // bateau dans l'inventaire dès le départ
+  var onWater = false;  // le perso est-il en train de naviguer ?
+  var boatFlip = null;  // horodatage de la dernière bascule terre<->eau (anim)
+  var saveAccum = 0;    // cadence d'auto-sauvegarde
 
   // ── Brouillard de guerre (lissé) + mini-carte radar ──────────────────────
   // Monde infini -> exploré stocké en dictionnaire creux "col,row". Le fog est
@@ -311,6 +359,8 @@
   fog.width = W; fog.height = H;
   var revealCv = document.createElement('canvas'); // masque de révélation basse résolution
   var revealCtx = revealCv.getContext('2d');
+  var waterCv = document.createElement('canvas');  // masque d'eau basse résolution (berges lissées)
+  var waterCtx = waterCv.getContext('2d');
 
   var VISION = 165; // rayon de vision claire autour du perso (px)
 
@@ -445,11 +495,56 @@
 
   var titleEl = document.getElementById('title');
   document.getElementById('ver').textContent = 'v' + VERSION;
-  document.getElementById('playBtn').addEventListener('click', function () {
-    started = true;
-    titleEl.style.display = 'none';
+
+  // ── Sauvegarde (localStorage) : "New Game" / "Continue" ──────────────────
+  var SAVE_KEY = 'cacayou_save_v1';
+  function hasSave() { try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; } }
+  function saveGame() {
+    try {
+      var ek = Object.keys(explored);
+      if (ek.length > 120000) return; // garde-fou taille de sauvegarde
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        v: 1, px: player.x, py: player.y, logCount: logCount,
+        hasAxe: hasAxe, axePicked: axe.picked,
+        explored: ek, removed: Object.keys(removedTrees)
+      }));
+    } catch (e) {}
+  }
+  function applySave(s) {
+    explored = {}; if (s.explored) for (var i = 0; i < s.explored.length; i++) explored[s.explored[i]] = 1;
+    removedTrees = {}; if (s.removed) for (var j = 0; j < s.removed.length; j++) removedTrees[s.removed[j]] = 1;
+    chunks = {};
+    logCount = s.logCount || 0; hasAxe = !!s.hasAxe; axe.picked = !!s.axePicked;
+    player.x = s.px || HOME.x; player.y = s.py || HOME.y; player.vx = 0; player.vy = 0;
+    refCellX = null; refCellY = null; refreshActive();
+  }
+  function newGame() {
+    explored = {}; removedTrees = {}; chunks = {};
+    logs.length = 0; parts.length = 0; floaters.length = 0;
+    logCount = 0; hasAxe = false; axe.picked = false;
+    player.x = HOME.x; player.y = HOME.y; player.vx = 0; player.vy = 0;
+    refCellX = null; refCellY = null;
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
+    refreshActive();
+  }
+  function startGame() {
+    started = true; titleEl.style.display = 'none';
     initAudio(); // le clic = geste utilisateur -> débloque l'AudioContext
-  });
+  }
+  (function initMenu() {
+    var contBtn = document.getElementById('continueBtn');
+    var newBtn = document.getElementById('playBtn');
+    if (hasSave() && contBtn) { contBtn.style.display = ''; if (newBtn) newBtn.className = 'secondary'; }
+    if (contBtn) contBtn.addEventListener('click', function () {
+      var ok = false;
+      try { applySave(JSON.parse(localStorage.getItem(SAVE_KEY))); ok = true; } catch (e) {}
+      if (!ok) newGame();
+      startGame();
+    });
+    if (newBtn) newBtn.addEventListener('click', function () { newGame(); startGame(); });
+  })();
+  window.addEventListener('beforeunload', function () { if (started) saveGame(); });
+  document.addEventListener('visibilitychange', function () { if (document.hidden && started) saveGame(); });
 
   // ── Collisions & évitement ───────────────────────────────────────────────
   var PR = 9; // rayon du perso au sol
@@ -618,6 +713,9 @@
     // Le joueur a avancé assez -> reconstruit la fenêtre active (décors + nav).
     var rcx = Math.round(player.x / REFRESH), rcy = Math.round(player.y / REFRESH);
     if (rcx !== refCellX || rcy !== refCellY) { refCellX = rcx; refCellY = rcy; refreshActive(); }
+    // Bateau : sur l'eau on navigue (déplacement normal) ; bascule = anim + éclaboussures.
+    var nowWater = hasBoat && isWater(player.x, player.y);
+    if (nowWater !== onWater) { onWater = nowWater; boatFlip = T; spawnSplash(player.x, player.y - 4, 14); shake = Math.max(shake, 3.5); }
 
     if (Math.hypot(player.vx, player.vy) > 12) {
       var s = Math.hypot(player.vx, player.vy);
@@ -720,6 +818,10 @@
     }
 
     reveal();
+
+    // auto-sauvegarde périodique
+    saveAccum += dt;
+    if (saveAccum >= 4) { saveAccum = 0; saveGame(); }
   }
 
   function camera() {
@@ -728,12 +830,26 @@
   }
 
   // ── Rendu ────────────────────────────────────────────────────────────────
-  function drawGround() {
-    // Sol d'herbe pastel UNI. Pas de quadrillage/damier ni de touffes dessinés :
-    // Charlie posera ses propres touffes + ombres. La grille logique du fog of
-    // war existe toujours (invisible), elle ne dépend pas de ce rendu.
+  function drawGround(cam) {
+    // Sol d'herbe pastel UNI, puis l'eau (lacs/rivières) par-dessus.
     ctx.fillStyle = '#c2e0a6';
     ctx.fillRect(-8, -8, W + 16, H + 16); // léger débord pour la secousse d'écran
+    drawWater(cam);
+  }
+  // Eau via masque basse résolution ré-étalé en LISSANT -> berges fluides.
+  function drawWater(cam) {
+    var WS = 20;
+    var c0 = Math.floor(cam.x / WS) - 1, r0 = Math.floor(cam.y / WS) - 1;
+    var c1 = Math.ceil((cam.x + W) / WS) + 1, r1 = Math.ceil((cam.y + H) / WS) + 1;
+    var cols = c1 - c0 + 1, rows = r1 - r0 + 1;
+    waterCv.width = cols; waterCv.height = rows;
+    waterCtx.clearRect(0, 0, cols, rows);
+    waterCtx.fillStyle = '#7fb8e6';
+    for (var rr = r0; rr <= r1; rr++) for (var cc = c0; cc <= c1; cc++) {
+      if (isWater((cc + 0.5) * WS, (rr + 0.5) * WS)) waterCtx.fillRect(cc - c0, rr - r0, 1, 1);
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(waterCv, c0 * WS - cam.x, r0 * WS - cam.y, cols * WS, rows * WS);
   }
 
   // Sprite de décor (sapin / rocher), ancré par sa base. Pas d'ombre : Charlie
@@ -804,6 +920,37 @@
     arm(2, -21 - bob, 0.15 - swing, 1);     // bras AVANT : épaule recentrée
     part('heroHead', 9, -26 - bob, 21);     // tête croco décalée à droite (cou au-dessus du corps)
     ctx.restore();
+  }
+
+  // Perso EN BATEAU (sur l'eau) : le voilier d'Elaijah, tangage doux + sillage +
+  // petit saut à la bascule terre<->eau. sy = ligne d'eau (base de la coque).
+  function drawBoat(sx, sy) {
+    var bob = Math.sin(T * 2.6) * 1.8;
+    var tilt = Math.sin(T * 1.7) * 0.04;
+    var hop = 0;
+    if (boatFlip != null) { var e = T - boatFlip; if (e < 0.4) hop = Math.sin(e / 0.4 * Math.PI) * 6; }
+    // sillage
+    ctx.save(); ctx.globalAlpha = 0.20; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(sx, sy + 3, 24, 8, 0, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke(); ctx.restore();
+    // ombre sur l'eau
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#1f4a63';
+    ctx.beginPath(); ctx.ellipse(sx, sy + 2, 22, 6, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    var im = IMG.boat;
+    if (im && im.complete && im.naturalWidth) {
+      var h = 72, w = h * (im.naturalWidth / im.naturalHeight);
+      var faceRight = player.facing.x >= -0.05;
+      ctx.save(); ctx.translate(sx, sy - bob - hop); ctx.rotate(tilt);
+      if (!faceRight) ctx.scale(-1, 1);
+      ctx.drawImage(im, -w / 2, -h + 4, w, h); // coque posée ~au niveau de l'eau
+      ctx.restore();
+    } else {
+      // placeholder tant que l'asset n'est pas chargé
+      ctx.save(); ctx.translate(sx, sy - bob - hop);
+      ctx.fillStyle = '#b07a44'; ctx.strokeStyle = '#7a4f28'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(-20, -6); ctx.lineTo(20, -6);
+      ctx.quadraticCurveTo(16, 8, 0, 9); ctx.quadraticCurveTo(-16, 8, -20, -6); ctx.closePath();
+      ctx.fill(); ctx.stroke(); ctx.restore();
+    }
   }
 
   // Silhouette en pointillé quand le perso est masqué par un feuillage/élément.
@@ -1097,7 +1244,7 @@
     var cam = camera();
     ctx.save();
     if (shake > 0.1) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-    drawGround();
+    drawGround(cam);
 
     // Depth-sort : sapins/rochers + perso, triés par y (base) pour que le perso
     // passe devant ce qui est plus haut et derrière ce qui est plus bas.
@@ -1117,7 +1264,7 @@
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
       var it = items[j];
-      if (it.player) drawPlayer(it.sx, it.sy);
+      if (it.player) { if (onWater) drawBoat(it.sx, it.sy); else drawPlayer(it.sx, it.sy); }
       else if (it.axe) drawAxe(it.sx, it.sy);
       else if (it.log) drawLog(it.log, it.sx, it.sy);
       else if (it.campfire) drawCampfire(campfire, it.sx, it.sy);
