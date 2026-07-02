@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.8.6';
+  var VERSION = '0.9.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -25,6 +25,7 @@
     canvas.style.height = H + 'px';
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (typeof fog !== 'undefined' && fog) { fog.width = W; fog.height = H; }
+    if (booted) refreshActive(); // la fenêtre active/nav dépend de W/H
   }
   window.addEventListener('resize', resize);
   // Orientation : l'UI est fluide (tout se recalcule depuis W/H). On force un
@@ -53,8 +54,13 @@
   })();
   resize();
 
-  // ── Monde ────────────────────────────────────────────────────────────────
-  var WORLD = { w: 3200, h: 3200 };
+  // ── Monde procédural infini (par chunks) ─────────────────────────────────
+  // Plus de bornes : le monde se fabrique autour du joueur en "chunks" générés
+  // de façon déterministe (même graine -> même endroit, donc aucun pop en
+  // revenant sur ses pas). Le point de départ (0,0) = la maison (feu + hache).
+  var HOME = { x: 0, y: 0 };
+  var CHUNK = 640;       // taille d'un chunk (px monde)
+  var HOME_CLEAR = 260;  // rayon dégagé autour de la maison
 
   function mulberry32(a) {
     return function () {
@@ -63,6 +69,12 @@
       t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
       return ((t ^ t >>> 14) >>> 0) / 4294967296;
     };
+  }
+  // Graine déterministe par chunk (gère les coordonnées négatives).
+  function hashChunk(cx, cy) {
+    var h = Math.imul(cx | 0, 374761393) + Math.imul(cy | 0, 668265263) | 0;
+    h = Math.imul(h ^ h >>> 13, 1274126177);
+    return (h ^ h >>> 16) >>> 0;
   }
 
   // ── Assets dessinés à la main (détourés de la photo de Charlie) ──────────
@@ -92,38 +104,68 @@
   // hauteur cible a l'écran (world px) par type ; le sprite garde son ratio.
   var TARGET_H = { tree: 122, rock: 46 };
 
-  // ── Décor semé (sapins + rochers) ────────────────────────────────────────
-  var decoRnd = mulberry32(90210);
-  var decos = [];
-  (function seedDecor() {
-    var cx = WORLD.w / 2, cy = WORLD.h / 2;
-    for (var i = 0; i < 140; i++) {
-      var x = 120 + decoRnd() * (WORLD.w - 240);
-      var y = 120 + decoRnd() * (WORLD.h - 240);
-      if (Math.hypot(x - cx, y - cy) < 260) continue; // dégager le point de départ
-      var isTree = decoRnd() < 0.62;
-      var tv = decoRnd();
+  // ── Décor procédural par chunks ──────────────────────────────────────────
+  var removedTrees = {};  // ids d'arbres abattus (persistent même chunk déchargé)
+  var chunks = {};        // "cx,cy" -> { decos:[...] } (cache déterministe)
+  function genChunk(cx, cy) {
+    var rnd = mulberry32(hashChunk(cx, cy));
+    var list = [];
+    var count = 5 + ((rnd() * 5) | 0);      // 5..9 décors par chunk
+    for (var i = 0; i < count; i++) {
+      var x = (cx + rnd()) * CHUNK, y = (cy + rnd()) * CHUNK;
+      var isTree = rnd() < 0.62, tv = rnd(), pick = rnd();
+      if (Math.hypot(x - HOME.x, y - HOME.y) < HOME_CLEAR) continue; // dégager la maison
+      var id = cx + '_' + cy + '_' + i;
+      if (removedTrees[id]) continue;
       var key = isTree ? (tv < 0.4 ? 'treeA' : (tv < 0.76 ? 'treeB' : 'treeC')) // ~24% = arbre d'Elaijah
-                       : (decoRnd() < 0.5 ? 'rockA' : 'rockB');
-      var s = 0.82 + decoRnd() * 0.42;
-      // Rayon de collision au SOL : tronc étroit pour les arbres (on passe
-      // derrière le feuillage), corps un peu plus large pour les rochers.
+                       : (pick < 0.5 ? 'rockA' : 'rockB');
+      var s = 0.82 + rnd() * 0.42;
+      // Rayon de collision au SOL : tronc étroit pour les arbres, corps plus large pour les rochers.
       var cr = isTree ? 9 * s : 15 * s;
-      var deco = { key: key, type: isTree ? 'tree' : 'rock', x: x, y: y, s: s, cr: cr };
+      var deco = { id: id, ck: cx + ',' + cy, key: key, type: isTree ? 'tree' : 'rock', x: x, y: y, s: s, cr: cr };
       if (isTree) { deco.hp = 5; deco.dead = false; deco.felling = null; } // 5 coups pour l'abattre
-      decos.push(deco);
+      list.push(deco);
     }
-  })();
+    return { decos: list };
+  }
+  function ensureChunk(cx, cy) {
+    var k = cx + ',' + cy;
+    return chunks[k] || (chunks[k] = genChunk(cx, cy));
+  }
+  function removeFromChunk(d) {
+    var ch = chunks[d.ck]; if (!ch) return;
+    var i = ch.decos.indexOf(d); if (i >= 0) ch.decos.splice(i, 1);
+  }
+  // Fenêtre active : décors des chunks visibles + marge. `decos` = set de
+  // travail courant (toutes les boucles existantes itèrent dessus). Reconstruit
+  // quand le joueur avance assez -> coût par frame constant sur un monde infini.
+  var decos = [];
+  var refCellX = null, refCellY = null;
+  var REFRESH = 256;     // seuil de reconstruction de la fenêtre (px monde)
+  function refreshActive() {
+    var cam = camera(), m = 320;
+    var cx0 = Math.floor((cam.x - m) / CHUNK), cx1 = Math.floor((cam.x + W + m) / CHUNK);
+    var cy0 = Math.floor((cam.y - m) / CHUNK), cy1 = Math.floor((cam.y + H + m) / CHUNK);
+    decos = [];
+    for (var cy = cy0; cy <= cy1; cy++) for (var cx = cx0; cx <= cx1; cx++) {
+      var ch = ensureChunk(cx, cy);
+      for (var i = 0; i < ch.decos.length; i++) {
+        var d = ch.decos[i];
+        if (!d.dead || d.felling != null) decos.push(d); // garde les arbres en pleine chute
+      }
+    }
+    buildNav();
+  }
 
   // ── Hache à ramasser + messages flottants ────────────────────────────────
   IMG.axe = new Image(); IMG.axe.src = 'assets/axe.png'; // dessin de Charlie (sinon placeholder vectoriel)
-  var axe = { x: WORLD.w / 2 + 130, y: WORLD.h / 2 + 40, picked: false };
+  var axe = { x: HOME.x + 130, y: HOME.y + 40, picked: false };
   var hasAxe = false;
   // Feu de camp = élément à DEUX plans (fond + devant) ; les bûches/flammes se
   // rendent ENTRE les deux (nichées dans le foyer). `contents` = ce qu'on met
   // dedans (démo : 2 bûches, en attendant la mécanique de dépôt + flammes).
   var campfire = {
-    x: WORLD.w / 2 - 135, y: WORLD.h / 2 - 6,
+    x: HOME.x - 135, y: HOME.y - 6,
     cr: 24,          // collision totale : on ne passe pas à travers
     contents: []     // vide pour l'instant (Charlie : pas de bûches dedans)
   };
@@ -236,9 +278,9 @@
   // Monstre d'Elaijah : erre doucement dans la forêt avec une anim d'idle
   // (respiration + dandinement + balancement). Segmentation/rig = plus tard.
   var monster = {
-    x: WORLD.w / 2 + 300, y: WORLD.h / 2 - 220,
-    hx: WORLD.w / 2 + 300, hy: WORLD.h / 2 - 220, // point d'ancrage (zone d'errance)
-    tx: WORLD.w / 2 + 300, ty: WORLD.h / 2 - 220, retarget: 0, t: 0
+    x: HOME.x + 300, y: HOME.y - 220,
+    hx: HOME.x + 300, hy: HOME.y - 220, // point d'ancrage (zone d'errance)
+    tx: HOME.x + 300, ty: HOME.y - 220, retarget: 0, t: 0
   };
 
   // Créatures qui MARCHENT (2e monstre d'Elaijah, riggé en pièces). Plusieurs
@@ -246,49 +288,37 @@
   var walkers = [];
   (function seedWalkers() {
     for (var i = 0; i < 3; i++) {
-      var wx = WORLD.w / 2 + (Math.random() - 0.5) * 1500;
-      var wy = WORLD.h / 2 + (Math.random() - 0.5) * 1500;
-      if (Math.hypot(wx - WORLD.w / 2, wy - WORLD.h / 2) < 340) { wx += 420; wy -= 300; }
+      var wx = HOME.x + (Math.random() - 0.5) * 1500;
+      var wy = HOME.y + (Math.random() - 0.5) * 1500;
+      if (Math.hypot(wx - HOME.x, wy - HOME.y) < 340) { wx += 420; wy -= 300; }
       walkers.push({ x: wx, y: wy, hx: wx, hy: wy, tx: wx, ty: wy, retarget: 0, phase: Math.random() * 6, face: 1, sz: 0.85 + Math.random() * 0.35, foot: 0 });
     }
   })();
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
-  var player = { x: WORLD.w / 2, y: WORLD.h / 2, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
+  var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
 
-  // ── Brouillard de guerre + mini-carte ────────────────────────────────────
+  // ── Brouillard de guerre (lissé) + mini-carte radar ──────────────────────
+  // Monde infini -> exploré stocké en dictionnaire creux "col,row". Le fog est
+  // rendu via un masque basse résolution ré-étalé en LISSANT : les bords des
+  // cases se fondent en courbe fluide au lieu de marches d'escalier (Charlie).
   var CELL = 40;
-  var GCOLS = Math.ceil(WORLD.w / CELL);
-  var GROWS = Math.ceil(WORLD.h / CELL);
-  var explored = new Uint8Array(GCOLS * GROWS);
-
-  var miniMap = document.createElement('canvas');
-  miniMap.width = GCOLS; miniMap.height = GROWS;
-  var miniCtx = miniMap.getContext('2d');
-  miniCtx.fillStyle = '#23301f';                 // inexploré (mini-carte)
-  miniCtx.fillRect(0, 0, GCOLS, GROWS);
+  var explored = {};
+  function isExplored(c, r) { return explored[c + ',' + r] === 1; }
 
   var fog = document.createElement('canvas');
   var fogCtx = fog.getContext('2d');
   fog.width = W; fog.height = H;
+  var revealCv = document.createElement('canvas'); // masque de révélation basse résolution
+  var revealCtx = revealCv.getContext('2d');
 
   var VISION = 165; // rayon de vision claire autour du perso (px)
 
   function reveal() {
-    var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL);
-    var R = 4;
-    for (var r = -R; r <= R; r++) {
-      for (var c = -R; c <= R; c++) {
-        if (c * c + r * r > R * R) continue;
-        var cc = pc + c, rr = pr + r;
-        if (cc < 0 || rr < 0 || cc >= GCOLS || rr >= GROWS) continue;
-        var idx = rr * GCOLS + cc;
-        if (!explored[idx]) {
-          explored[idx] = 1;
-          miniCtx.fillStyle = '#8fc47a';           // exploré (mini-carte, vert pastel)
-          miniCtx.fillRect(cc, rr, 1, 1);
-        }
-      }
+    var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL), R = 4;
+    for (var r = -R; r <= R; r++) for (var c = -R; c <= R; c++) {
+      if (c * c + r * r > R * R) continue;
+      explored[(pc + c) + ',' + (pr + r)] = 1;
     }
   }
 
@@ -345,7 +375,7 @@
     var tree = treeAt(mx, my);
     if (tree) {
       if (!hasAxe) {
-        floater('Il te faut une hache', tree.x, tree.y - 44);
+        floater('You need an axe', tree.x, tree.y - 44);
         var adj0 = adjacencyPoint(tree.x, tree.y, tree.cr + PR + 8);
         navPath = findPath(player.x, player.y, adj0.x, adj0.y); navI = 0; goActive = !!navPath; pendingAction = null;
         return;
@@ -389,7 +419,7 @@
     var a = pendingAction; pendingAction = null; navPath = null; goActive = false;
     if (a.type === 'pickup') {
       hasAxe = true; axe.picked = true;
-      floater('Hache ramassée', player.x, player.y - 46);
+      floater('Axe picked up', player.x, player.y - 46);
       playSound('axe', 1.0, 0.5);
     } else if (a.type === 'chop') {
       startSwing(a.tree);
@@ -454,32 +484,40 @@
   // Obstacles STATIQUES -> la grille bloquée est précalculée UNE fois ; A* ne
   // tourne qu'au moment d'un tap. Cellules bloquées = obstacles gonflés du
   // rayon du perso, pour qu'il contourne sans frotter.
+  // Grille de nav FENÊTRÉE autour de la caméra (monde infini : une grille
+  // globale exploserait). Origine monde = (navOX,navOY). Reconstruite à chaque
+  // rafraîchissement de la fenêtre active et à chaque arbre abattu.
   var NAV = 30;
-  var NCOLS = Math.ceil(WORLD.w / NAV), NROWS = Math.ceil(WORLD.h / NAV);
-  var blocked = new Uint8Array(NCOLS * NROWS);
+  var navOX = 0, navOY = 0, NCOLS = 0, NROWS = 0;
+  var blocked = new Uint8Array(0);
+  function w2c(x) { return Math.floor((x - navOX) / NAV); }
+  function w2r(y) { return Math.floor((y - navOY) / NAV); }
   function blockCircle(x, y, R) {
-    var cA = Math.max(0, Math.floor((x - R) / NAV)), cB = Math.min(NCOLS - 1, Math.floor((x + R) / NAV));
-    var rA = Math.max(0, Math.floor((y - R) / NAV)), rB = Math.min(NROWS - 1, Math.floor((y + R) / NAV));
+    var cA = Math.max(0, w2c(x - R)), cB = Math.min(NCOLS - 1, w2c(x + R));
+    var rA = Math.max(0, w2r(y - R)), rB = Math.min(NROWS - 1, w2r(y + R));
     for (var r = rA; r <= rB; r++) for (var c = cA; c <= cB; c++) {
-      var ex = c * NAV + NAV / 2 - x, ey = r * NAV + NAV / 2 - y;
+      var ex = navOX + c * NAV + NAV / 2 - x, ey = navOY + r * NAV + NAV / 2 - y;
       if (ex * ex + ey * ey <= R * R) blocked[r * NCOLS + c] = 1;
     }
   }
   function buildNav() {
-    blocked.fill(0);
+    var cam = camera(), m = 340;
+    navOX = Math.floor(cam.x - m); navOY = Math.floor(cam.y - m);
+    NCOLS = Math.ceil((W + m * 2) / NAV); NROWS = Math.ceil((H + m * 2) / NAV);
+    if (blocked.length !== NCOLS * NROWS) blocked = new Uint8Array(NCOLS * NROWS);
+    else blocked.fill(0);
     for (var i = 0; i < decos.length; i++) { var d = decos[i]; if (d.dead) continue; blockCircle(d.x, d.y, d.cr + PR + 4); }
-    blockCircle(campfire.x, campfire.y, campfire.cr + PR + 4); // le feu de camp bloque aussi le pathfinding
+    blockCircle(campfire.x, campfire.y, campfire.cr + PR + 4); // le feu bloque aussi le pathfinding
   }
-  buildNav();
   function navBlocked(c, r) { return c < 0 || r < 0 || c >= NCOLS || r >= NROWS || blocked[r * NCOLS + c] === 1; }
-  function cellCenter(c, r) { return { x: c * NAV + NAV / 2, y: r * NAV + NAV / 2 }; }
+  function cellCenter(c, r) { return { x: navOX + c * NAV + NAV / 2, y: navOY + r * NAV + NAV / 2 }; }
 
   function hasLOS(ax, ay, bx, by) {
     var dx = bx - ax, dy = by - ay, dist = Math.hypot(dx, dy);
     var steps = Math.max(1, Math.ceil(dist / (NAV * 0.5)));
     for (var s = 0; s <= steps; s++) {
       var t = s / steps, x = ax + dx * t, y = ay + dy * t;
-      if (navBlocked(Math.floor(x / NAV), Math.floor(y / NAV))) return false;
+      if (navBlocked(w2c(x), w2r(y))) return false;
     }
     return true;
   }
@@ -527,8 +565,8 @@
   }
   // Renvoie une liste de waypoints monde (lissée), ou null si pas de chemin.
   function findPath(sx, sy, tx, ty) {
-    var sc = Math.floor(sx / NAV), sr = Math.floor(sy / NAV);
-    var gc = Math.floor(tx / NAV), gr = Math.floor(ty / NAV);
+    var sc = w2c(sx), sr = w2r(sy);
+    var gc = w2c(tx), gr = w2r(ty);
     var sf = nearestFree(sc, sr); if (!sf) return null;
     var gf = nearestFree(gc, gr); if (!gf) return null;
     var cells = aStar(sf.c, sf.r, gf.c, gf.r); if (!cells) return null;
@@ -576,11 +614,10 @@
     player.vy += (tvy - player.vy) * k;
     player.x += player.vx * dt;
     player.y += player.vy * dt;
-    player.x = Math.max(40, Math.min(WORLD.w - 40, player.x));
-    player.y = Math.max(40, Math.min(WORLD.h - 40, player.y));
-    resolveCollisions(); // repousse hors des troncs/rochers
-    player.x = Math.max(40, Math.min(WORLD.w - 40, player.x));
-    player.y = Math.max(40, Math.min(WORLD.h - 40, player.y));
+    resolveCollisions(); // repousse hors des troncs/rochers (monde infini : pas de bornes)
+    // Le joueur a avancé assez -> reconstruit la fenêtre active (décors + nav).
+    var rcx = Math.round(player.x / REFRESH), rcy = Math.round(player.y / REFRESH);
+    if (rcx !== refCellX || rcy !== refCellY) { refCellX = rcx; refCellY = rcy; refreshActive(); }
 
     if (Math.hypot(player.vx, player.vy) > 12) {
       var s = Math.hypot(player.vx, player.vy);
@@ -633,6 +670,8 @@
         spawnChips(dd.x, dd.y - 22, 24);
         spawnLogs(dd.x, dd.y, dd.fallDir || 1); // étalées le long de la chute
         shake = Math.max(shake, 5);
+        removedTrees[dd.id] = 1;   // persiste même si le chunk est rechargé plus tard
+        removeFromChunk(dd);       // retire de la liste du chunk
         decos.splice(di, 1);
       }
     }
@@ -684,12 +723,8 @@
   }
 
   function camera() {
-    var cx = player.x - W / 2, cy = player.y - H / 2;
-    cx = Math.max(0, Math.min(WORLD.w - W, cx));
-    cy = Math.max(0, Math.min(WORLD.h - H, cy));
-    if (WORLD.w < W) cx = (WORLD.w - W) / 2;
-    if (WORLD.h < H) cy = (WORLD.h - H) / 2;
-    return { x: cx, y: cy };
+    // Monde infini : la caméra suit le perso, aucune borne.
+    return { x: player.x - W / 2, y: player.y - H / 2 };
   }
 
   // ── Rendu ────────────────────────────────────────────────────────────────
@@ -996,28 +1031,25 @@
     fogCtx.globalCompositeOperation = 'source-over';
     fogCtx.clearRect(0, 0, W, H);
     // Inconnu = voile sombre et doux (pas noir pur, pour rester dans le pastel).
-    fogCtx.fillStyle = 'rgba(30,40,32,0.95)';
+    fogCtx.fillStyle = 'rgba(28,38,30,0.92)';
     fogCtx.fillRect(0, 0, W, H);
-    // Cases déjà explorées : on éclaircit (mémoire) par effacement partiel.
-    fogCtx.globalCompositeOperation = 'destination-out';
-    fogCtx.fillStyle = 'rgba(0,0,0,0.6)';
-    var c0 = Math.floor(cam.x / CELL), r0 = Math.floor(cam.y / CELL);
-    var c1 = Math.ceil((cam.x + W) / CELL), r1 = Math.ceil((cam.y + H) / CELL);
-    for (var rr = r0; rr <= r1; rr++) {
-      if (rr < 0 || rr >= GROWS) continue;
-      for (var cc = c0; cc <= c1; cc++) {
-        if (cc < 0 || cc >= GCOLS) continue;
-        if (!explored[rr * GCOLS + cc]) continue;
-        // Tuilage pixel-parfait : les bords de cases coïncident exactement (le
-        // bord droit de la case N = bord gauche de N+1), donc AUCUN chevauchement
-        // ni interstice. Évite le double-effacement aux jointures qui faisait
-        // ressortir l'herbe en lignes vert clair (grille visible). (Charlie)
-        var sxp = Math.floor(cc * CELL - cam.x), syp = Math.floor(rr * CELL - cam.y);
-        var exp = Math.floor((cc + 1) * CELL - cam.x), eyp = Math.floor((rr + 1) * CELL - cam.y);
-        fogCtx.fillRect(sxp, syp, exp - sxp, eyp - syp);
-      }
+    // Masque de révélation BASSE RÉSOLUTION : 1 texel = 1 cellule (+1 de marge).
+    // On le ré-étale ensuite en LISSANT -> l'interpolation transforme les cases
+    // carrées en dégradé, donc la frontière du brouillard suit une courbe fluide
+    // (l'effet bevel/Bézier demandé) au lieu de marches d'escalier.
+    var c0 = Math.floor(cam.x / CELL) - 1, r0 = Math.floor(cam.y / CELL) - 1;
+    var c1 = Math.ceil((cam.x + W) / CELL) + 1, r1 = Math.ceil((cam.y + H) / CELL) + 1;
+    var cols = c1 - c0 + 1, rows = r1 - r0 + 1;
+    revealCv.width = cols; revealCv.height = rows;
+    revealCtx.clearRect(0, 0, cols, rows);
+    revealCtx.fillStyle = 'rgba(255,255,255,0.6)';  // mémoire (exploré hors vision) = éclairci partiel
+    for (var rr = r0; rr <= r1; rr++) for (var cc = c0; cc <= c1; cc++) {
+      if (isExplored(cc, rr)) revealCtx.fillRect(cc - c0, rr - r0, 1, 1);
     }
-    // Vision claire autour du perso (cercle dégradé).
+    fogCtx.globalCompositeOperation = 'destination-out';
+    fogCtx.imageSmoothingEnabled = true;
+    fogCtx.drawImage(revealCv, c0 * CELL - cam.x, r0 * CELL - cam.y, cols * CELL, rows * CELL);
+    // Vision claire autour du perso (cercle dégradé) : efface à fond.
     var px = player.x - cam.x, py = player.y - cam.y;
     var grad = fogCtx.createRadialGradient(px, py, VISION * 0.42, px, py, VISION);
     grad.addColorStop(0, 'rgba(0,0,0,1)');
@@ -1028,23 +1060,35 @@
     ctx.drawImage(fog, 0, 0, W, H);
   }
 
+  // Mini-carte = RADAR centré sur le perso (monde infini : pas de carte globale).
+  // Montre les cases explorées autour de lui, la maison, et le perso au centre.
   function renderMiniMap() {
     var size = Math.round(Math.min(132, Math.min(W, H) * 0.32));
     var pad = 12;
     var mx = pad, my = H - size - pad - 8;
+    var RC = 26;                       // rayon affiché, en cellules
+    var cell = size / (RC * 2 + 1);
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.5)';
-    ctx.fillRect(mx - 3, my - 3, size + 6, size + 6);
-    ctx.strokeStyle = 'rgba(59,90,46,0.5)';
-    ctx.lineWidth = 1;
-    ctx.strokeRect(mx - 3, my - 3, size + 6, size + 6);
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(miniMap, mx, my, size, size);
-    ctx.imageSmoothingEnabled = true;
-    var ppx = mx + (player.x / WORLD.w) * size;
-    var ppy = my + (player.y / WORLD.h) * size;
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(mx - 3, my - 3, size + 6, size + 6);
+    ctx.strokeStyle = 'rgba(59,90,46,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(mx - 3, my - 3, size + 6, size + 6);
+    // clip au cadre pour ne rien déborder
+    ctx.beginPath(); ctx.rect(mx, my, size, size); ctx.clip();
+    ctx.fillStyle = '#23301f'; ctx.fillRect(mx, my, size, size); // inexploré
+    var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL);
+    ctx.fillStyle = '#8fc47a';                                   // exploré (vert pastel)
+    for (var r = -RC; r <= RC; r++) for (var c = -RC; c <= RC; c++) {
+      if (!isExplored(pc + c, pr + r)) continue;
+      ctx.fillRect(mx + (c + RC) * cell, my + (r + RC) * cell, cell + 0.6, cell + 0.6);
+    }
+    // repère maison si dans la fenêtre
+    var hc = Math.floor(HOME.x / CELL) - pc, hr = Math.floor(HOME.y / CELL) - pr;
+    if (Math.abs(hc) <= RC && Math.abs(hr) <= RC) {
+      ctx.fillStyle = '#e6b34d';
+      ctx.beginPath(); ctx.arc(mx + (hc + RC + 0.5) * cell, my + (hr + RC + 0.5) * cell, 2.6, 0, Math.PI * 2); ctx.fill();
+    }
+    // perso au centre
     ctx.fillStyle = '#ef8a68';
-    ctx.beginPath(); ctx.arc(ppx, ppy, 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(mx + size / 2, my + size / 2, 3.2, 0, Math.PI * 2); ctx.fill();
     ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.restore();
   }
@@ -1106,6 +1150,11 @@
     drawLogHud();
     ctx.restore();
   }
+
+  // Amorce le monde (décors + nav) autour de la maison avant la 1re frame.
+  var booted = false;
+  refreshActive();
+  booted = true;
 
   // ── Boucle ───────────────────────────────────────────────────────────────
   var last = performance.now();
