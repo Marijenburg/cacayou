@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#bfe0a8" />
+  <title>Cacayou</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #bfe0a8; }
+    body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; touch-action: none; overscroll-behavior: none; }
+    #game { display: block; position: fixed; inset: 0; }
+    #fs {
+      position: fixed; top: env(safe-area-inset-top, 8px); right: 8px; z-index: 10;
+      color: #3b5a2e; background: rgba(255,255,255,0.6); border: 1px solid rgba(59,90,46,0.3);
+      border-radius: 8px; width: 34px; height: 30px; font: 16px system-ui, sans-serif;
+      cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center;
+    }
+    #title {
+      position: fixed; inset: 0; z-index: 20; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 18px;
+      background: radial-gradient(120% 100% at 50% 30%, #d6efc6 0%, #bfe0a8 60%, #a9d492 100%);
+      color: #34502a; text-align: center; padding: 24px;
+    }
+    #title h1 { font-size: clamp(28px, 8vw, 52px); font-weight: 800; letter-spacing: 0.02em; }
+    #title p { font-size: 14px; opacity: 0.75; max-width: 320px; line-height: 1.5; }
+    #playBtn {
+      margin-top: 8px; padding: 14px 34px; font-size: 18px; font-weight: 700; color: #fff;
+      background: #6bab4e; border: none; border-radius: 12px; cursor: pointer;
+      box-shadow: 0 6px 0 #4e8437, 0 8px 16px rgba(0,0,0,0.15);
+    }
+    #playBtn:active { transform: translateY(3px); box-shadow: 0 3px 0 #4e8437, 0 5px 10px rgba(0,0,0,0.15); }
+    #ver { position: absolute; bottom: 12px; font: 11px monospace; color: #4e7a3a; opacity: 0.6; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <button id="fs" title="Plein écran">&#9974;</button>
+  <div id="title">
+    <h1>Cacayou</h1>
+    <p>Un jeu d'Elaijah 🐊<br>Balade-toi dans la forêt. Touche l'écran pour te déplacer (ou clavier WASD / flèches).</p>
+    <button id="playBtn">Jouer</button>
+    <div id="ver">v0.0.0</div>
+  </div>
+  <script src="game.js"></script>
+</body>
+</html>
