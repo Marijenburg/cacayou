@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.11.0';
+  var VERSION = '0.11.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');

@@ -1,7 +1,6 @@
-# Kakaïou 🐊
+# Cacayou 🐊
 
 Un petit jeu d'exploration fait à la main par **Elaijah** (et son papa Charlie).
-(Nom affiché : *Kakaïou* ; slug du repo : `cacayou`.)
 
 Balade-toi dans une forêt pastel : ramasse ta hache, coupe des arbres, récolte des
 bûches, croise des monstres qui errent. Tous les personnages, décors et sons sont
