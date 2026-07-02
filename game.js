@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.15.0';
+  var VERSION = '0.16.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -103,17 +103,18 @@
     return (v00 * (1 - u) + v10 * u) * (1 - v) + (v01 * (1 - u) + v11 * u) * v;
   }
   function fbm(x, y) {
-    var t = 0, amp = 0.5, f = 1;
-    for (var i = 0; i < 4; i++) { t += valueNoise(x * f, y * f) * amp; f *= 2; amp *= 0.5; }
-    return t;
+    // 3 octaves normalisées : plus lisse = moins de micro-détail (grands plans d'eau).
+    var t = 0, amp = 0.5, f = 1, tot = 0;
+    for (var i = 0; i < 3; i++) { t += valueNoise(x * f, y * f) * amp; tot += amp; f *= 2; amp *= 0.5; }
+    return t / tot;
   }
   // Champ d'eau CONTINU (> 0 = eau) : combine lacs (bruit basse fréquence) +
   // rivières sinueuses. La valeur signée sert au marching-squares pour des berges
   // en diagonale lisses (pas de marches d'escalier). Maison (0,0) au sec.
   function waterField(x, y) {
     if ((x - HOME.x) * (x - HOME.x) + (y - HOME.y) * (y - HOME.y) < 360 * 360) return -1;
-    var lake = 0.31 - fbm(x / 520 + 7.3, y / 520 + 2.1);                  // > 0 dans les lacs
-    var river = 0.02 - Math.abs(fbm(x / 760 + 50.5, y / 760 - 30.2) - 0.5); // > 0 dans les rivières
+    var lake = 0.30 - fbm(x / 900 + 7.3, y / 900 + 2.1);                     // grands lacs (grande échelle)
+    var river = 0.015 - Math.abs(fbm(x / 1300 + 50.5, y / 1300 - 30.2) - 0.5); // grandes rivières continues
     return lake > river ? lake : river;
   }
   function isWater(x, y) { return waterField(x, y) > 0; }
