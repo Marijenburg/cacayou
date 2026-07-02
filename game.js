@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.11.1';
+  var VERSION = '0.12.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -95,14 +95,16 @@
     for (var i = 0; i < 4; i++) { t += valueNoise(x * f, y * f) * amp; f *= 2; amp *= 0.5; }
     return t;
   }
-  // Eau = grands lacs (bruit basse fréquence) + rivières sinueuses (contour d'un
-  // autre bruit). La maison (0,0) reste au sec pour ne pas démarrer sur l'eau.
-  function isWater(x, y) {
-    if ((x - HOME.x) * (x - HOME.x) + (y - HOME.y) * (y - HOME.y) < 360 * 360) return false;
-    if (fbm(x / 520 + 7.3, y / 520 + 2.1) < 0.31) return true;                     // lacs
-    if (Math.abs(fbm(x / 760 + 50.5, y / 760 - 30.2) - 0.5) < 0.02) return true;   // rivières
-    return false;
+  // Champ d'eau CONTINU (> 0 = eau) : combine lacs (bruit basse fréquence) +
+  // rivières sinueuses. La valeur signée sert au marching-squares pour des berges
+  // en diagonale lisses (pas de marches d'escalier). Maison (0,0) au sec.
+  function waterField(x, y) {
+    if ((x - HOME.x) * (x - HOME.x) + (y - HOME.y) * (y - HOME.y) < 360 * 360) return -1;
+    var lake = 0.31 - fbm(x / 520 + 7.3, y / 520 + 2.1);                  // > 0 dans les lacs
+    var river = 0.02 - Math.abs(fbm(x / 760 + 50.5, y / 760 - 30.2) - 0.5); // > 0 dans les rivières
+    return lake > river ? lake : river;
   }
+  function isWater(x, y) { return waterField(x, y) > 0; }
 
   // ── Assets dessinés à la main (détourés de la photo de Charlie) ──────────
   var ASSETS = {
@@ -366,8 +368,6 @@
   fog.width = W; fog.height = H;
   var revealCv = document.createElement('canvas'); // masque de révélation basse résolution
   var revealCtx = revealCv.getContext('2d');
-  var waterCv = document.createElement('canvas');  // masque d'eau basse résolution (berges lissées)
-  var waterCtx = waterCv.getContext('2d');
 
   var VISION = 165; // rayon de vision claire autour du perso (px)
 
@@ -869,20 +869,55 @@
     ctx.fillRect(-8, -8, W + 16, H + 16); // léger débord pour la secousse d'écran
     drawWater(cam);
   }
-  // Eau via masque basse résolution ré-étalé en LISSANT -> berges fluides.
+  // Eau en MARCHING SQUARES : rendu vectoriel NET (pas de flou). Les berges sont
+  // des diagonales lisses (interpolées sur le champ) au lieu de marches d'escalier.
+  // Un seul fill() pour tout : les bords internes entre cases se fondent sans
+  // couture, seul le contour eau/terre reste. (Charlie : net pour l'eau.)
   function drawWater(cam) {
-    var WS = 20;
-    var c0 = Math.floor(cam.x / WS) - 1, r0 = Math.floor(cam.y / WS) - 1;
-    var c1 = Math.ceil((cam.x + W) / WS) + 1, r1 = Math.ceil((cam.y + H) / WS) + 1;
-    var cols = c1 - c0 + 1, rows = r1 - r0 + 1;
-    waterCv.width = cols; waterCv.height = rows;
-    waterCtx.clearRect(0, 0, cols, rows);
-    waterCtx.fillStyle = '#7fb8e6';
-    for (var rr = r0; rr <= r1; rr++) for (var cc = c0; cc <= c1; cc++) {
-      if (isWater((cc + 0.5) * WS, (rr + 0.5) * WS)) waterCtx.fillRect(cc - c0, rr - r0, 1, 1);
+    var GS = 24;
+    var c0 = Math.floor(cam.x / GS) - 1, r0 = Math.floor(cam.y / GS) - 1;
+    var c1 = Math.ceil((cam.x + W) / GS) + 1, r1 = Math.ceil((cam.y + H) / GS) + 1;
+    var NC = c1 - c0 + 1, NR = r1 - r0 + 1;
+    var fld = new Float32Array(NC * NR);
+    for (var rr = 0; rr < NR; rr++) for (var cc = 0; cc < NC; cc++)
+      fld[rr * NC + cc] = waterField((c0 + cc) * GS, (r0 + rr) * GS);
+
+    ctx.save();
+    ctx.fillStyle = '#7fb8e6';
+    ctx.beginPath();
+    function edge(ax, ay, fa, bx, by, fb) { var t = fa / (fa - fb); return [ax + (bx - ax) * t, ay + (by - ay) * t]; }
+    function poly(pts) {
+      if (pts.length < 3) return;
+      ctx.moveTo(pts[0][0] - cam.x, pts[0][1] - cam.y);
+      for (var i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0] - cam.x, pts[i][1] - cam.y);
+      ctx.closePath();
     }
-    ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(waterCv, c0 * WS - cam.x, r0 * WS - cam.y, cols * WS, rows * WS);
+    for (var r = 0; r < NR - 1; r++) for (var c = 0; c < NC - 1; c++) {
+      var fTL = fld[r * NC + c], fTR = fld[r * NC + c + 1], fBR = fld[(r + 1) * NC + c + 1], fBL = fld[(r + 1) * NC + c];
+      if (fTL <= 0 && fTR <= 0 && fBR <= 0 && fBL <= 0) continue;
+      var x0 = (c0 + c) * GS, y0 = (r0 + r) * GS, x1 = x0 + GS, y1 = y0 + GS;
+      if (fTL > 0 && fTR > 0 && fBR > 0 && fBL > 0) { poly([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]); continue; }
+      var cx = [x0, x1, x1, x0], cy = [y0, y0, y1, y1], f = [fTL, fTR, fBR, fBL];
+      var saddle = (fTL > 0 && fBR > 0 && fTR <= 0 && fBL <= 0) || (fTR > 0 && fBL > 0 && fTL <= 0 && fBR <= 0);
+      if (saddle) {
+        for (var k = 0; k < 4; k++) if (f[k] > 0) {
+          var pr = (k + 3) % 4, nx = (k + 1) % 4;
+          var mA = edge(cx[k], cy[k], f[k], cx[pr], cy[pr], f[pr]);
+          var mB = edge(cx[k], cy[k], f[k], cx[nx], cy[nx], f[nx]);
+          poly([[cx[k], cy[k]], mB, mA]);
+        }
+        continue;
+      }
+      var pts = [];
+      for (var k2 = 0; k2 < 4; k2++) {
+        var n2 = (k2 + 1) % 4;
+        if (f[k2] > 0) pts.push([cx[k2], cy[k2]]);
+        if ((f[k2] > 0) !== (f[n2] > 0)) pts.push(edge(cx[k2], cy[k2], f[k2], cx[n2], cy[n2], f[n2]));
+      }
+      poly(pts);
+    }
+    ctx.fill();
+    ctx.restore();
   }
 
   // Sprite de décor (sapin / rocher), ancré par sa base. Pas d'ombre : Charlie
