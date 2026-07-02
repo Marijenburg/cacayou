@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.16.0';
+  var VERSION = '0.17.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -316,6 +316,7 @@
   function startWaterLoop() {
     if (!AC || !waterBuf || waterSrc) return;
     waterSrc = AC.createBufferSource(); waterSrc.buffer = waterBuf; waterSrc.loop = true;
+    waterSrc.playbackRate.value = 0.8; // pitch abaissé -> impression de "grandes eaux"
     waterGain = AC.createGain(); waterGain.gain.value = 0;
     waterSrc.connect(waterGain); waterGain.connect(AC.destination);
     try { waterSrc.start(); } catch (e) {}
@@ -1040,7 +1041,18 @@
     }
     arm(-1, -22 - bob, 0.15 + swing, 0.9);  // bras ARRIÈRE : épaule recentrée sur le corps
     part('heroPack', -8, -8 - bob, 27);     // sac à dos + matelas (derrière-gauche)
-    part('heroShoes', 1, 0, 13);            // chaussures au sol (pas de rebond)
+    // chaussures animées : bascule + petit soulèvement alterné -> impression de marche.
+    (function () {
+      var sh = IMG.heroShoes; if (!sh || !sh.complete || !sh.naturalWidth) return;
+      var shh = 13, shw = shh * (sh.naturalWidth / sh.naturalHeight);
+      var st = moving ? Math.sin(T * 9) : 0;
+      ctx.save();
+      ctx.translate(1 + st * 1.5, 0);         // léger va-et-vient
+      ctx.rotate(st * 0.22);                   // bascule avant/arrière
+      ctx.translate(0, -Math.abs(st) * 1.6);   // petit soulèvement
+      ctx.drawImage(sh, -shw / 2, -shh, shw, shh);
+      ctx.restore();
+    })();
     part('heroBody', 1, -8 - bob, 24);      // corps
     arm(2, -21 - bob, 0.15 - swing, 1);     // bras AVANT : épaule recentrée
     part('heroHead', 13, -26 - bob, 21);    // tête croco alignée sur le col (cou au-dessus du corps)
@@ -1054,8 +1066,6 @@
     var tilt = Math.sin(T * 1.7) * 0.04;
     var hop = 0;
     if (boatFlip != null) { var e = T - boatFlip; if (e < 0.4) hop = Math.sin(e / 0.4 * Math.PI) * 6; }
-    var moving = Math.hypot(player.vx, player.vy) > 25;
-    var paddle = Math.sin(T * (moving ? 7 : 3)) * (moving ? 0.5 : 0.2); // pagaie (ample si on avance)
     // sillage
     ctx.save(); ctx.globalAlpha = 0.20; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.ellipse(sx, sy + 3, 24, 8, 0, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke(); ctx.restore();
@@ -1078,13 +1088,15 @@
     }
     if (im && im.complete && im.naturalWidth) {
       var h = 72, w = h * (im.naturalWidth / im.naturalHeight);
-      ctx.drawImage(im, -w / 2, -h + 4, w, h); // 1) le bateau
-      // 2) le croco assis PAR-DESSUS : haut du corps seulement -> aucun pied ne traverse
-      //    la coque ; il est devant le mât, décalé vers l'avant. Bras = pagaie.
-      arm(-4, -25, 0.30 + paddle);            // bras arrière
-      part('heroBody', 6, -12, 20);           // corps assis dans la coque
-      arm(10, -24, 0.30 - paddle);            // bras avant
-      part('heroHead', 13, -30, 19);          // tête croco
+      var sway = Math.sin(T * 2.4) * 0.04; // bras au repos, très léger
+      // 1) le croco d'ABORD (DERRIÈRE le bateau), assis BAS dans la coque : seuls le
+      //    haut du buste + la tête dépassent, bras le long du corps.
+      arm(-3, -19, 0.16 + sway);              // bras arrière, le long du corps
+      part('heroBody', 7, -8, 20);            // buste bas
+      arm(9, -18, 0.16 - sway);               // bras avant, le long du corps
+      part('heroHead', 12, -25, 19);          // tête basse
+      // 2) le bateau PAR-DESSUS -> la coque cache le bas du buste (il est bien dedans)
+      ctx.drawImage(im, -w / 2, -h + 4, w, h);
     } else {
       // placeholder tant que l'asset bateau n'est pas chargé
       ctx.fillStyle = '#b07a44'; ctx.strokeStyle = '#7a4f28'; ctx.lineWidth = 2.5;
