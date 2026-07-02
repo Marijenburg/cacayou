@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.14.0';
+  var VERSION = '0.15.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -16,6 +16,18 @@
   var W = 0, H = 0;
   var T = 0;      // temps global (s) pour les animations (frappe, wobble)
   var shake = 0;  // secousse d'écran à l'impact
+
+  // Cycle jour/nuit : plein jour jusqu'à 6:30, crépuscule, nuit ~2:30, aube, jour.
+  var dayT = 45;                                     // horloge du cycle (s), démarre en journée
+  var DAY_LEN = 390, DUSK = 35, NIGHT_LEN = 80, DAWN = 35;
+  var CYCLE = DAY_LEN + DUSK + NIGHT_LEN + DAWN;     // 540 s ; nuit (crépuscule→aube) = 150 s = 2:30
+  function darknessAt(t) {
+    var c = ((t % CYCLE) + CYCLE) % CYCLE;
+    if (c < DAY_LEN) return 0;
+    c -= DAY_LEN; if (c < DUSK) return c / DUSK;
+    c -= DUSK; if (c < NIGHT_LEN) return 1;
+    c -= NIGHT_LEN; return 1 - c / DAWN;
+  }
 
   function resize() {
     W = window.innerWidth; H = window.innerHeight;
@@ -733,6 +745,7 @@
   // ── Mise à jour ──────────────────────────────────────────────────────────
   function update(dt) {
     if (!started) return;
+    dayT += dt; // avance le cycle jour/nuit
     var tvx = 0, tvy = 0;
     var dx = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
     var dy = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
@@ -843,6 +856,17 @@
     // créatures qui marchent : errance + cycle de marche (phase avance en marchant).
     for (var wk = 0; wk < walkers.length; wk++) {
       var mo = walkers[wk];
+      var rdx = mo.x - player.x, rdy = mo.y - player.y;
+      if (rdx * rdx + rdy * rdy > 1750 * 1750) { // trop loin -> réapparaît hors écran autour du joueur (sur terre)
+        var rang = Math.random() * Math.PI * 2;
+        for (var rti = 0; rti < 6; rti++) {
+          var rdd = 780 + Math.random() * 320;
+          var rnx = player.x + Math.cos(rang) * rdd, rny = player.y + Math.sin(rang) * rdd;
+          if (!isWater(rnx, rny)) { mo.x = mo.hx = mo.tx = rnx; mo.y = mo.hy = mo.ty = rny; break; }
+          rang += 1.4;
+        }
+        mo.retarget = 0;
+      }
       mo.retarget -= dt;
       if (mo.retarget <= 0) { mo.retarget = 2 + Math.random() * 4.5; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
       var wdx = mo.tx - mo.x, wdy = mo.ty - mo.y, wdd = Math.hypot(wdx, wdy);
@@ -1018,7 +1042,7 @@
     part('heroShoes', 1, 0, 13);            // chaussures au sol (pas de rebond)
     part('heroBody', 1, -8 - bob, 24);      // corps
     arm(2, -21 - bob, 0.15 - swing, 1);     // bras AVANT : épaule recentrée
-    part('heroHead', 9, -26 - bob, 21);     // tête croco décalée à droite (cou au-dessus du corps)
+    part('heroHead', 13, -26 - bob, 21);    // tête croco alignée sur le col (cou au-dessus du corps)
     ctx.restore();
   }
 
@@ -1121,8 +1145,42 @@
       ctx.save(); ctx.translate(sx + ct.ox, sy - 14 + ct.oy); ctx.rotate(ct.rot);
       ctx.drawImage(im, -lw / 2, -lh * 0.7, lw, lh); ctx.restore();
     }
+    // flammes procédurales (allumées dès le départ), nichées dans le foyer entre
+    // les deux plans. Additif pour l'effet lumineux qui vacille.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    var fn = 5, fbase = sy - 6;
+    for (var fi = 0; fi < fn; fi++) {
+      var fx = sx + (fi - (fn - 1) / 2) * 6.5;
+      var flick = Math.sin(T * 11 + fi * 1.7) * 0.5 + Math.sin(T * 19 + fi) * 0.3 + 0.5;
+      var fh = (13 + flick * 8) * (1 - Math.abs(fi - (fn - 1) / 2) / fn * 0.5);
+      var fg = ctx.createLinearGradient(fx, fbase, fx, fbase - fh);
+      fg.addColorStop(0, 'rgba(255,120,40,0.85)');
+      fg.addColorStop(0.55, 'rgba(255,185,65,0.8)');
+      fg.addColorStop(1, 'rgba(255,240,150,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath();
+      ctx.moveTo(fx - 4, fbase);
+      ctx.quadraticCurveTo(fx - 3.5, fbase - fh * 0.55, fx, fbase - fh);
+      ctx.quadraticCurveTo(fx + 3.5, fbase - fh * 0.55, fx + 4, fbase);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.restore();
     // 3) DEVANT (arc) : bas ~2px sous la base -> chevauche bien le fond (pas de sol visible).
     ctx.drawImage(iff, sx - w / 2, sy + 2 - hF, w, hF);
+  }
+  // Halo lumineux du feu de camp : subtil le jour, fort la nuit. Additif.
+  function drawCampLight(cam, dark) {
+    var lx = campfire.x - cam.x, ly = campfire.y - cam.y - 10;
+    if (lx < -220 || lx > W + 220 || ly < -220 || ly > H + 220) return;
+    var R = 150 + Math.sin(T * 8) * 6 + Math.sin(T * 13) * 3;
+    var inten = 0.26 + dark * 0.55;
+    var g = ctx.createRadialGradient(lx, ly, 8, lx, ly, R);
+    g.addColorStop(0, 'rgba(255,186,98,' + inten.toFixed(3) + ')');
+    g.addColorStop(0.5, 'rgba(255,150,60,' + (inten * 0.4).toFixed(3) + ')');
+    g.addColorStop(1, 'rgba(255,140,50,0)');
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(lx, ly, R, 0, Math.PI * 2); ctx.fill(); ctx.restore();
   }
 
   // Tente : sprite ancré à la base ; "respire" (ronflement) quand on dort dedans.
@@ -1441,6 +1499,14 @@
     if (occluded && !inTent) drawPlayerGhost(ppx, ppy);
     if (!inTent) drawSwing(ppx, ppy);
     drawParts(cam);
+
+    // Cycle jour/nuit : voile bleuté selon l'obscurité + halo du feu qui perce.
+    var dark = darknessAt(dayT);
+    if (dark > 0.001) {
+      ctx.fillStyle = 'rgba(20,28,58,' + (dark * 0.6).toFixed(3) + ')';
+      ctx.fillRect(-8, -8, W + 16, H + 16);
+    }
+    drawCampLight(cam, dark);
 
     renderFog(cam);
     drawNavPath(cam);
