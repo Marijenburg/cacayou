@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.17.0';
+  var VERSION = '0.18.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -423,6 +423,10 @@
   var pointer = { active: false };
   var marker = null;
   var goActive = false;
+  // Zoom (pinch 2 doigts) : échelle du rendu autour du joueur (au centre écran).
+  var zoom = 1, ZOOM_MIN = 0.55, ZOOM_MAX = 2.2;
+  var pointers = {};        // pointerId -> {x,y} (multi-touch)
+  var pinching = false, pinchDist0 = 0, pinchZoom0 = 1;
   var navPath = null, navI = 0;   // waypoints calculés + index courant
   var pendingAction = null;       // { type:'chop'|'pickup', tree, range }
   var swing = null;               // { tree, t0, impacted } animation de frappe
@@ -442,18 +446,36 @@
   window.addEventListener('keyup', function (e) { setKey(e, false); });
 
   function pointToWorld(e) {
-    var cam = camera();
-    return { x: e.clientX + cam.x, y: e.clientY + cam.y };
+    // tient compte du zoom : le joueur est au centre de l'écran.
+    return { x: player.x + (e.clientX - W / 2) / zoom, y: player.y + (e.clientY - H / 2) / zoom };
   }
   canvas.addEventListener('pointerdown', function (e) {
     if (!started) return;
     initAudio(); // reprend l'AudioContext si le mobile l'a suspendu
-    pointer.active = true;
-    marker = pointToWorld(e);
-    goActive = false;
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (ids.length >= 2) {
+      // 2 doigts -> mode pinch : on annule le tap en cours.
+      pinching = true; pointer.active = false; marker = null;
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      pinchDist0 = Math.hypot(a.x - b.x, a.y - b.y) || 1; pinchZoom0 = zoom;
+    } else {
+      pointer.active = true;
+      marker = pointToWorld(e);
+      goActive = false;
+    }
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   });
   canvas.addEventListener('pointermove', function (e) {
+    if (pointers[e.pointerId]) { pointers[e.pointerId].x = e.clientX; pointers[e.pointerId].y = e.clientY; }
+    var ids = Object.keys(pointers);
+    if (pinching && ids.length >= 2) {
+      var a = pointers[ids[0]], b = pointers[ids[1]];
+      var d = Math.hypot(a.x - b.x, a.y - b.y);
+      zoom = pinchZoom0 * (d / pinchDist0);
+      if (zoom < ZOOM_MIN) zoom = ZOOM_MIN; if (zoom > ZOOM_MAX) zoom = ZOOM_MAX;
+      return;
+    }
     if (!pointer.active) return;
     marker = pointToWorld(e);
   });
@@ -557,8 +579,15 @@
     playSound('treefall', 0.97 + Math.random() * 0.06, 1.0, 0.42);
     buildNav(); // la grille de nav oublie l'arbre abattu -> on peut traverser
   }
-  canvas.addEventListener('pointerup', endPointer);
-  canvas.addEventListener('pointercancel', endPointer);
+  function onPointerEnd(e) {
+    var wasPinching = pinching;
+    delete pointers[e.pointerId];
+    if (Object.keys(pointers).length < 2) pinching = false;
+    if (wasPinching) { marker = null; pointer.active = false; return; } // fin de pinch : pas de tap
+    endPointer();
+  }
+  canvas.addEventListener('pointerup', onPointerEnd);
+  canvas.addEventListener('pointercancel', onPointerEnd);
 
   var titleEl = document.getElementById('title');
   document.getElementById('ver').textContent = 'v' + VERSION;
@@ -921,20 +950,16 @@
   }
 
   // ── Rendu ────────────────────────────────────────────────────────────────
-  function drawGround(cam) {
-    // Sol d'herbe pastel UNI, puis l'eau (lacs/rivières) par-dessus.
-    ctx.fillStyle = '#c2e0a6';
-    ctx.fillRect(-8, -8, W + 16, H + 16); // léger débord pour la secousse d'écran
-    drawWater(cam);
-  }
   // Eau en MARCHING SQUARES : rendu vectoriel NET (pas de flou). Les berges sont
   // des diagonales lisses (interpolées sur le champ) au lieu de marches d'escalier.
   // Un seul fill() pour tout : les bords internes entre cases se fondent sans
   // couture, seul le contour eau/terre reste. (Charlie : net pour l'eau.)
-  function drawWater(cam) {
+  function drawWater(cam, zoom) {
     var GS = 24;
-    var c0 = Math.floor(cam.x / GS) - 1, r0 = Math.floor(cam.y / GS) - 1;
-    var c1 = Math.ceil((cam.x + W) / GS) + 1, r1 = Math.ceil((cam.y + H) / GS) + 1;
+    // fenêtre monde visible (élargie quand on dézoome).
+    var hw = (W / 2) / zoom, hh = (H / 2) / zoom, px = cam.x + W / 2, py = cam.y + H / 2;
+    var c0 = Math.floor((px - hw) / GS) - 1, r0 = Math.floor((py - hh) / GS) - 1;
+    var c1 = Math.ceil((px + hw) / GS) + 1, r1 = Math.ceil((py + hh) / GS) + 1;
     var NC = c1 - c0 + 1, NR = r1 - r0 + 1;
     var fld = new Float32Array(NC * NR);
     for (var rr = 0; rr < NR; rr++) for (var cc = 0; cc < NC; cc++)
@@ -1183,10 +1208,10 @@
     ctx.drawImage(iff, sx - w / 2, sy + 2 - hF, w, hF);
   }
   // Halo lumineux du feu de camp : subtil le jour, fort la nuit. Additif.
-  function drawCampLight(cam, dark) {
-    var lx = campfire.x - cam.x, ly = campfire.y - cam.y - 10;
-    if (lx < -220 || lx > W + 220 || ly < -220 || ly > H + 220) return;
-    var R = 150 + Math.sin(T * 8) * 6 + Math.sin(T * 13) * 3;
+  function drawCampLight(cam, dark, zoom) {
+    var lx = W / 2 + (campfire.x - player.x) * zoom, ly = H / 2 + (campfire.y - 10 - player.y) * zoom;
+    if (lx < -260 || lx > W + 260 || ly < -260 || ly > H + 260) return;
+    var R = (150 + Math.sin(T * 8) * 6 + Math.sin(T * 13) * 3) * zoom;
     var inten = 0.26 + dark * 0.55;
     var g = ctx.createRadialGradient(lx, ly, 8, lx, ly, R);
     g.addColorStop(0, 'rgba(255,186,98,' + inten.toFixed(3) + ')');
@@ -1397,18 +1422,17 @@
     ctx.restore();
   }
 
-  function renderFog(cam) {
+  function renderFog(cam, zoom) {
     fogCtx.globalCompositeOperation = 'source-over';
     fogCtx.clearRect(0, 0, W, H);
     // Inconnu = voile sombre et doux (pas noir pur, pour rester dans le pastel).
     fogCtx.fillStyle = 'rgba(28,38,30,0.92)';
     fogCtx.fillRect(0, 0, W, H);
-    // Masque de révélation BASSE RÉSOLUTION : 1 texel = 1 cellule (+1 de marge).
-    // On le ré-étale ensuite en LISSANT -> l'interpolation transforme les cases
-    // carrées en dégradé, donc la frontière du brouillard suit une courbe fluide
-    // (l'effet bevel/Bézier demandé) au lieu de marches d'escalier.
-    var c0 = Math.floor(cam.x / CELL) - 1, r0 = Math.floor(cam.y / CELL) - 1;
-    var c1 = Math.ceil((cam.x + W) / CELL) + 1, r1 = Math.ceil((cam.y + H) / CELL) + 1;
+    // Masque de révélation basse résolution, mappé en tenant compte du zoom, puis
+    // ré-étalé en lissant (bords fluides). Fenêtre monde élargie au dézoom.
+    var px = player.x, py = player.y, hw = (W / 2) / zoom, hh = (H / 2) / zoom;
+    var c0 = Math.floor((px - hw) / CELL) - 1, r0 = Math.floor((py - hh) / CELL) - 1;
+    var c1 = Math.ceil((px + hw) / CELL) + 1, r1 = Math.ceil((py + hh) / CELL) + 1;
     var cols = c1 - c0 + 1, rows = r1 - r0 + 1;
     revealCv.width = cols; revealCv.height = rows;
     revealCtx.clearRect(0, 0, cols, rows);
@@ -1418,14 +1442,15 @@
     }
     fogCtx.globalCompositeOperation = 'destination-out';
     fogCtx.imageSmoothingEnabled = true;
-    fogCtx.drawImage(revealCv, c0 * CELL - cam.x, r0 * CELL - cam.y, cols * CELL, rows * CELL);
-    // Vision claire autour du perso (cercle dégradé) : efface à fond.
-    var px = player.x - cam.x, py = player.y - cam.y;
-    var grad = fogCtx.createRadialGradient(px, py, VISION * 0.42, px, py, VISION);
+    var dx = W / 2 + (c0 * CELL - px) * zoom, dy = H / 2 + (r0 * CELL - py) * zoom;
+    fogCtx.drawImage(revealCv, dx, dy, cols * CELL * zoom, rows * CELL * zoom);
+    // Vision claire autour du perso (au centre écran), rayon mis à l'échelle.
+    var sxp = W / 2, syp = H / 2, VR = VISION * zoom;
+    var grad = fogCtx.createRadialGradient(sxp, syp, VR * 0.42, sxp, syp, VR);
     grad.addColorStop(0, 'rgba(0,0,0,1)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
     fogCtx.fillStyle = grad;
-    fogCtx.beginPath(); fogCtx.arc(px, py, VISION, 0, Math.PI * 2); fogCtx.fill();
+    fogCtx.beginPath(); fogCtx.arc(sxp, syp, VR, 0, Math.PI * 2); fogCtx.fill();
     fogCtx.globalCompositeOperation = 'source-over';
     ctx.drawImage(fog, 0, 0, W, H);
   }
@@ -1465,17 +1490,28 @@
 
   function render(now) {
     var cam = camera();
+
+    // Base plein écran (herbe) : couvre toujours l'écran, indépendant du zoom.
+    ctx.fillStyle = '#c2e0a6';
+    ctx.fillRect(0, 0, W, H);
+
     ctx.save();
     if (shake > 0.1) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-    drawGround(cam);
+    // ZOOM : mise à l'échelle du monde autour du centre écran (= le joueur).
+    ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-W / 2, -H / 2);
+
+    drawWater(cam, zoom);
 
     // Depth-sort : sapins/rochers + perso, triés par y (base) pour que le perso
-    // passe devant ce qui est plus haut et derrière ce qui est plus bas.
+    // passe devant ce qui est plus haut et derrière ce qui est plus bas. Culling
+    // élargi selon le zoom (au dézoom, on voit plus loin).
     var items = [];
+    var vmL = W / 2 - (W / 2) / zoom - 200, vmR = W / 2 + (W / 2) / zoom + 200;
+    var vmT = H / 2 - (H / 2) / zoom - 280, vmB = H / 2 + (H / 2) / zoom + 160;
     for (var i = 0; i < decos.length; i++) {
       var d = decos[i];
       var sx = d.x - cam.x, sy = d.y - cam.y;
-      if (sx < -180 || sx > W + 180 || sy < -240 || sy > H + 140) continue;
+      if (sx < vmL || sx > vmR || sy < vmT || sy > vmB) continue;
       items.push({ y: d.y, sx: sx, sy: sy, deco: d });
     }
     items.push({ y: player.y, sx: player.x - cam.x, sy: player.y - cam.y, player: true });
@@ -1512,24 +1548,26 @@
     if (occluded && !inTent) drawPlayerGhost(ppx, ppy);
     if (!inTent) drawSwing(ppx, ppy);
     drawParts(cam);
+    drawNavPath(cam);
+    drawDestMarker(cam, now);
+    drawZs(cam);
+    drawFloaters(cam);
 
-    // Cycle jour/nuit : voile bleuté selon l'obscurité + halo du feu qui perce.
+    ctx.restore(); // enlève le zoom (+ shake)
+
+    // Effets plein écran (espace écran) : nuit + halo du feu (mapping zoom) + brouillard.
     var dark = darknessAt(dayT);
     if (dark > 0.001) {
       ctx.fillStyle = 'rgba(20,28,58,' + (dark * 0.6).toFixed(3) + ')';
-      ctx.fillRect(-8, -8, W + 16, H + 16);
+      ctx.fillRect(0, 0, W, H);
     }
-    drawCampLight(cam, dark);
+    drawCampLight(cam, dark, zoom);
+    renderFog(cam, zoom);
 
-    renderFog(cam);
-    drawNavPath(cam);
-    drawDestMarker(cam, now);
+    // HUD (non zoomé)
     renderMiniMap();
-    drawZs(cam);
-    drawFloaters(cam);
     drawAxeHud();
     drawLogHud();
-    ctx.restore();
   }
 
   // Amorce le monde (décors + nav) autour de la maison avant la 1re frame.
