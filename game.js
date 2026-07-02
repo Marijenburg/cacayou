@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.12.0';
+  var VERSION = '0.13.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -268,6 +268,7 @@
   // Un fichier manquant => slot vide => no-op : on peut brancher les sons de
   // Charlie au fur et à mesure sans casser le comportement.
   var AC = null, footParity = false;
+  var waterBuf = null, waterSrc = null, waterGain = null; // boucle sonore du bateau (remplace les pas)
   var SFX = { step: 'assets/step.mp3', axe: 'assets/sfx_axe.mp3', treehit: 'assets/sfx_treehit.mp3', leaves: 'assets/sfx_leaves.mp3', treefall: 'assets/sfx_treefall.mp3', mstep: 'assets/sfx_mstep.mp3' };
   var sfxBuf = {};
   var ambBuf = {};            // ambiances environnementales (vent / oiseaux)
@@ -289,6 +290,17 @@
         .then(function (ab) { return AC.decodeAudioData(ab); })
         .then(function (buf) { ambBuf[k] = buf; }).catch(function () {});
     });
+    // boucle de l'eau (mode bateau) : chargée puis démarrée en sourdine, gain modulé.
+    fetch('assets/water.mp3').then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(); })
+      .then(function (ab) { return AC.decodeAudioData(ab); })
+      .then(function (buf) { waterBuf = buf; startWaterLoop(); }).catch(function () {});
+  }
+  function startWaterLoop() {
+    if (!AC || !waterBuf || waterSrc) return;
+    waterSrc = AC.createBufferSource(); waterSrc.buffer = waterBuf; waterSrc.loop = true;
+    waterGain = AC.createGain(); waterGain.gain.value = 0;
+    waterSrc.connect(waterGain); waterGain.connect(AC.destination);
+    try { waterSrc.start(); } catch (e) {}
   }
   // Ambiance occasionnelle (vent / oiseaux) : très discret, avec dégradé montée->descente.
   function playAmbient() {
@@ -755,7 +767,7 @@
     var moved = Math.hypot(player.vx, player.vy) * dt;
     if (moved > 0.5) {
       stepAccum += moved;
-      if (stepAccum >= STEP_DIST) { stepAccum -= STEP_DIST; playStep(); }
+      if (stepAccum >= STEP_DIST) { stepAccum -= STEP_DIST; if (!onWater) playStep(); }
     } else {
       stepAccum = STEP_DIST; // à l'arrêt : le prochain mouvement déclenche un pas tout de suite
     }
@@ -833,6 +845,12 @@
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
+
+    // boucle de l'eau (mode bateau) : volume selon on-water + vitesse (remplace les pas).
+    if (AC && waterGain) {
+      var wmov = Math.hypot(player.vx, player.vy) > 25;
+      waterGain.gain.setTargetAtTime(onWater ? (wmov ? 0.32 : 0.13) : 0, AC.currentTime, 0.15);
+    }
 
     // tente : Z's du sommeil qui s'envolent quand on dort dedans
     if (inTent) { zAccum += dt; if (zAccum >= 0.85) { zAccum = 0; spawnZ(); } }
@@ -997,28 +1015,45 @@
     var tilt = Math.sin(T * 1.7) * 0.04;
     var hop = 0;
     if (boatFlip != null) { var e = T - boatFlip; if (e < 0.4) hop = Math.sin(e / 0.4 * Math.PI) * 6; }
+    var moving = Math.hypot(player.vx, player.vy) > 25;
+    var paddle = Math.sin(T * (moving ? 7 : 3)) * (moving ? 0.5 : 0.2); // pagaie (ample si on avance)
     // sillage
     ctx.save(); ctx.globalAlpha = 0.20; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.ellipse(sx, sy + 3, 24, 8, 0, 0.1 * Math.PI, 0.9 * Math.PI); ctx.stroke(); ctx.restore();
     // ombre sur l'eau
     ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#1f4a63';
     ctx.beginPath(); ctx.ellipse(sx, sy + 2, 22, 6, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
-    var im = IMG.boat;
+
+    var im = IMG.boat, faceRight = player.facing.x >= -0.05;
+    ctx.save(); ctx.translate(sx, sy - bob - hop); ctx.rotate(tilt);
+    if (!faceRight) ctx.scale(-1, 1);
+    function part(key, ox, bottomY, th) {
+      var pim = IMG[key]; if (!pim || !pim.complete || !pim.naturalWidth) return;
+      var ph = th, pw = ph * (pim.naturalWidth / pim.naturalHeight);
+      ctx.drawImage(pim, ox - pw / 2, bottomY - ph, pw, ph);
+    }
+    function arm(ox, oy, ang) {
+      var aim = IMG.heroArm; if (!aim || !aim.complete || !aim.naturalWidth) return;
+      var aw = 16, ah = aw * (aim.naturalHeight / aim.naturalWidth);
+      ctx.save(); ctx.translate(ox, oy); ctx.rotate(ang); ctx.drawImage(aim, 0, -ah * 0.42, aw, ah); ctx.restore();
+    }
     if (im && im.complete && im.naturalWidth) {
       var h = 72, w = h * (im.naturalWidth / im.naturalHeight);
-      var faceRight = player.facing.x >= -0.05;
-      ctx.save(); ctx.translate(sx, sy - bob - hop); ctx.rotate(tilt);
-      if (!faceRight) ctx.scale(-1, 1);
-      ctx.drawImage(im, -w / 2, -h + 4, w, h); // coque posée ~au niveau de l'eau
-      ctx.restore();
+      ctx.drawImage(im, -w / 2, -h + 4, w, h); // 1) le bateau
+      // 2) le croco assis PAR-DESSUS : haut du corps seulement -> aucun pied ne traverse
+      //    la coque ; il est devant le mât, décalé vers l'avant. Bras = pagaie.
+      arm(-4, -25, 0.30 + paddle);            // bras arrière
+      part('heroBody', 6, -12, 20);           // corps assis dans la coque
+      arm(10, -24, 0.30 - paddle);            // bras avant
+      part('heroHead', 13, -30, 19);          // tête croco
     } else {
-      // placeholder tant que l'asset n'est pas chargé
-      ctx.save(); ctx.translate(sx, sy - bob - hop);
+      // placeholder tant que l'asset bateau n'est pas chargé
       ctx.fillStyle = '#b07a44'; ctx.strokeStyle = '#7a4f28'; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(-20, -6); ctx.lineTo(20, -6);
       ctx.quadraticCurveTo(16, 8, 0, 9); ctx.quadraticCurveTo(-16, 8, -20, -6); ctx.closePath();
-      ctx.fill(); ctx.stroke(); ctx.restore();
+      ctx.fill(); ctx.stroke();
     }
+    ctx.restore();
   }
 
   // Silhouette en pointillé quand le perso est masqué par un feuillage/élément.
