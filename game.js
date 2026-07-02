@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.10.0';
+  var VERSION = '0.11.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -126,6 +126,8 @@
     heroShoes: 'assets/hero_shoes.png',
     heroArm: 'assets/hero_arm.png',     // même bras pour l'avant et l'arrière
     boat: 'assets/boat.png',            // voilier dessiné par Elaijah (voile rose + emblème croco)
+    tent: 'assets/tent.png',            // tente violette d'Elaijah (on y dort)
+    zzz: 'assets/zzz.png',              // Z du sommeil (détouré + passé en blanc)
   };
   var IMG = {};
   Object.keys(ASSETS).forEach(function (k) { var im = new Image(); im.src = ASSETS[k]; IMG[k] = im; });
@@ -198,6 +200,11 @@
     cr: 24,          // collision totale : on ne passe pas à travers
     contents: []     // vide pour l'instant (Charlie : pas de bûches dedans)
   };
+  // Tente d'Elaijah (au campement) : cliquer dessus pour aller dormir.
+  var tent = { x: HOME.x + 175, y: HOME.y - 45, cr: 20 };
+  var inTent = false;
+  var zs = [];        // Z's du sommeil qui s'envolent au-dessus de la tente
+  var zAccum = 0;
   var floaters = [];
   function floater(text, wx, wy) { floaters.push({ text: text, x: wx, y: wy, t: 0 }); }
   // éclats de bois : couleurs échantillonnées sur les copeaux dessinés par Charlie
@@ -391,7 +398,7 @@
     else if (k === 'arrowright' || k === 'd') keys.right = down;
     else return;
     e.preventDefault();
-    if (down) { marker = null; goActive = false; navPath = null; pendingAction = null; } // le clavier reprend la main
+    if (down) { if (inTent) exitTent(); marker = null; goActive = false; navPath = null; pendingAction = null; } // le clavier reprend la main
   }
   window.addEventListener('keydown', function (e) { setKey(e, true); });
   window.addEventListener('keyup', function (e) { setKey(e, false); });
@@ -417,6 +424,10 @@
     pointer.active = false;
     if (!marker) return;
     var mx = marker.x, my = marker.y;
+    // 0) réveil si on dort ; un clic sur la tente = juste se réveiller.
+    if (inTent) { exitTent(); if (tentAt(mx, my)) { marker = null; return; } }
+    // 0b) clic sur la tente (éveillé) = aller dormir.
+    if (!inTent && tentAt(mx, my)) { startAction('sleep', tent, tent.cr + PR + 12); return; }
     // 1) clic sur la hache au sol ?
     if (!hasAxe && !axe.picked && Math.hypot(mx - axe.x, my - axe.y) < 30) {
       startAction('pickup', null, PR + 26); return;
@@ -456,9 +467,25 @@
     if (d < 1) { dx = 0; dy = 1; d = 1; }
     return { x: tx + (dx / d) * r, y: ty + (dy / d) * r };
   }
-  function startAction(type, tree, range) {
-    pendingAction = { type: type, tree: tree, range: range };
-    var tx = tree ? tree.x : axe.x, ty = tree ? tree.y : axe.y;
+  // Tente : détection du clic + entrée (dormir) / sortie (se réveiller).
+  function tentAt(mx, my) {
+    var im = IMG.tent, h = 68, w = im && im.naturalWidth ? h * (im.naturalWidth / im.naturalHeight) : 60;
+    return mx > tent.x - w * 0.55 && mx < tent.x + w * 0.55 && my > tent.y - h && my < tent.y + 12;
+  }
+  function enterTent() {
+    inTent = true; player.vx = 0; player.vy = 0;
+    navPath = null; goActive = false; marker = null; zAccum = 0.3;
+  }
+  function exitTent() {
+    if (!inTent) return; inTent = false;
+    floater('*yawn*', player.x, player.y - 46);
+  }
+  function spawnZ() {
+    zs.push({ x: tent.x + 4, y: tent.y - 58, t: 0, life: 2.6, drift: Math.random() * 6.28, dir: Math.random() < 0.5 ? -1 : 1 });
+  }
+  function startAction(type, target, range) {
+    pendingAction = { type: type, target: target, range: range };
+    var tx = target ? target.x : axe.x, ty = target ? target.y : axe.y;
     if (Math.hypot(player.x - tx, player.y - ty) <= range) { executeAction(); return; }
     var adj = adjacencyPoint(tx, ty, range - 4);
     navPath = findPath(player.x, player.y, adj.x, adj.y); navI = 0; goActive = !!navPath;
@@ -472,7 +499,9 @@
       floater('Axe picked up', player.x, player.y - 46);
       playSound('axe', 1.0, 0.5);
     } else if (a.type === 'chop') {
-      startSwing(a.tree);
+      startSwing(a.target);
+    } else if (a.type === 'sleep') {
+      enterTent();
     }
   }
   function startSwing(tree) {
@@ -733,8 +762,8 @@
 
     // Action en attente (ramasser / frapper) : exécute une fois à portée.
     if (pendingAction) {
-      var atx = pendingAction.tree ? pendingAction.tree.x : axe.x;
-      var aty = pendingAction.tree ? pendingAction.tree.y : axe.y;
+      var atx = pendingAction.target ? pendingAction.target.x : axe.x;
+      var aty = pendingAction.target ? pendingAction.target.y : axe.y;
       if (Math.hypot(player.x - atx, player.y - aty) <= pendingAction.range) executeAction();
     }
     // Frappe : impact à mi-course -> l'arbre tremble + sons.
@@ -804,6 +833,10 @@
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
+
+    // tente : Z's du sommeil qui s'envolent quand on dort dedans
+    if (inTent) { zAccum += dt; if (zAccum >= 0.85) { zAccum = 0; spawnZ(); } }
+    for (var zi = zs.length - 1; zi >= 0; zi--) { zs[zi].t += dt; if (zs[zi].t >= zs[zi].life) zs.splice(zi, 1); }
 
     // bûches : mini-saut de spawn, puis ramassables à proximité.
     for (var li = logs.length - 1; li >= 0; li--) {
@@ -1006,6 +1039,41 @@
     }
     // 3) DEVANT (arc) : bas ~2px sous la base -> chevauche bien le fond (pas de sol visible).
     ctx.drawImage(iff, sx - w / 2, sy + 2 - hF, w, hF);
+  }
+
+  // Tente : sprite ancré à la base ; "respire" (ronflement) quand on dort dedans.
+  function drawTent(tt, sx, sy) {
+    var im = IMG.tent;
+    var breath = inTent ? (Math.sin(T * 2.3) * 0.05 + Math.sin(T * 0.7) * 0.02) : 0;
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 30, 7, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    if (im && im.complete && im.naturalWidth) {
+      var h = 68 * (1 + breath), w = 68 * (im.naturalWidth / im.naturalHeight) * (1 - breath * 0.45);
+      ctx.drawImage(im, sx - w / 2, sy - h, w, h);
+    } else {
+      ctx.save(); ctx.fillStyle = '#8a6bb0'; ctx.strokeStyle = '#3a2a4a'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(sx, sy - 60); ctx.lineTo(sx + 30, sy); ctx.lineTo(sx - 30, sy); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+    }
+  }
+  // Z's du sommeil : montent en ondulant, grandissent, s'estompent (rendu écran).
+  function drawZs(cam) {
+    var im = IMG.zzz;
+    for (var i = 0; i < zs.length; i++) {
+      var z = zs[i], p = z.t / z.life;
+      var a = p < 0.15 ? p / 0.15 : (1 - (p - 0.15) / 0.85);
+      var sx = z.x - cam.x + Math.sin(z.t * 2 + z.drift) * 12 + z.dir * z.t * 8;
+      var sy = z.y - cam.y - z.t * 30;
+      var sc = 0.55 + z.t * 0.3;
+      ctx.save(); ctx.globalAlpha = Math.max(0, a) * 0.95;
+      if (im && im.complete && im.naturalWidth) {
+        var h = 22 * sc, w = h * (im.naturalWidth / im.naturalHeight);
+        ctx.drawImage(im, sx - w / 2, sy - h, w, h);
+      } else {
+        ctx.fillStyle = '#fff'; ctx.font = '700 ' + Math.round(18 * sc) + 'px system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('Z', sx, sy);
+      }
+      ctx.restore();
+    }
   }
 
   // 2e monstre d'Elaijah, riggé en pièces, avec un cycle de MARCHE.
@@ -1259,15 +1327,17 @@
     if (!axe.picked) items.push({ y: axe.y, sx: axe.x - cam.x, sy: axe.y - cam.y, axe: true });
     for (var lgi = 0; lgi < logs.length; lgi++) { items.push({ y: logs[lgi].y, sx: logs[lgi].x - cam.x, sy: logs[lgi].y - cam.y, log: logs[lgi] }); }
     items.push({ y: campfire.y, sx: campfire.x - cam.x, sy: campfire.y - cam.y, campfire: true });
+    items.push({ y: tent.y, sx: tent.x - cam.x, sy: tent.y - cam.y, tent: true });
     items.push({ y: monster.y, sx: monster.x - cam.x, sy: monster.y - cam.y, monster: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
       var it = items[j];
-      if (it.player) { if (onWater) drawBoat(it.sx, it.sy); else drawPlayer(it.sx, it.sy); }
+      if (it.player) { if (!inTent) { if (onWater) drawBoat(it.sx, it.sy); else drawPlayer(it.sx, it.sy); } }
       else if (it.axe) drawAxe(it.sx, it.sy);
       else if (it.log) drawLog(it.log, it.sx, it.sy);
       else if (it.campfire) drawCampfire(campfire, it.sx, it.sy);
+      else if (it.tent) drawTent(tent, it.sx, it.sy);
       else if (it.monster) drawMonster(it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
@@ -1284,14 +1354,15 @@
       var odx = od.x - cam.x, ody = od.y - cam.y;
       if (ppx > odx - ow * 0.42 && ppx < odx + ow * 0.42 && (ppy - 18) > ody - oh && ppy < ody + 4) { occluded = true; break; }
     }
-    if (occluded) drawPlayerGhost(ppx, ppy);
-    drawSwing(ppx, ppy);
+    if (occluded && !inTent) drawPlayerGhost(ppx, ppy);
+    if (!inTent) drawSwing(ppx, ppy);
     drawParts(cam);
 
     renderFog(cam);
     drawNavPath(cam);
     drawDestMarker(cam, now);
     renderMiniMap();
+    drawZs(cam);
     drawFloaters(cam);
     drawAxeHud();
     drawLogHud();
