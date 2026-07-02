@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.13.0';
+  var VERSION = '0.14.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -269,6 +269,7 @@
   // Charlie au fur et à mesure sans casser le comportement.
   var AC = null, footParity = false;
   var waterBuf = null, waterSrc = null, waterGain = null; // boucle sonore du bateau (remplace les pas)
+  var snoreBuf = null, snoreSrc = null, snoreGain = null; // boucle de ronflement (dans la tente)
   var SFX = { step: 'assets/step.mp3', axe: 'assets/sfx_axe.mp3', treehit: 'assets/sfx_treehit.mp3', leaves: 'assets/sfx_leaves.mp3', treefall: 'assets/sfx_treefall.mp3', mstep: 'assets/sfx_mstep.mp3' };
   var sfxBuf = {};
   var ambBuf = {};            // ambiances environnementales (vent / oiseaux)
@@ -294,6 +295,10 @@
     fetch('assets/water.mp3').then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(); })
       .then(function (ab) { return AC.decodeAudioData(ab); })
       .then(function (buf) { waterBuf = buf; startWaterLoop(); }).catch(function () {});
+    // boucle de ronflement (dans la tente)
+    fetch('assets/snore.mp3').then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(); })
+      .then(function (ab) { return AC.decodeAudioData(ab); })
+      .then(function (buf) { snoreBuf = buf; startSnoreLoop(); }).catch(function () {});
   }
   function startWaterLoop() {
     if (!AC || !waterBuf || waterSrc) return;
@@ -301,6 +306,13 @@
     waterGain = AC.createGain(); waterGain.gain.value = 0;
     waterSrc.connect(waterGain); waterGain.connect(AC.destination);
     try { waterSrc.start(); } catch (e) {}
+  }
+  function startSnoreLoop() {
+    if (!AC || !snoreBuf || snoreSrc) return;
+    snoreSrc = AC.createBufferSource(); snoreSrc.buffer = snoreBuf; snoreSrc.loop = true;
+    snoreGain = AC.createGain(); snoreGain.gain.value = 0;
+    snoreSrc.connect(snoreGain); snoreGain.connect(AC.destination);
+    try { snoreSrc.start(); } catch (e) {}
   }
   // Ambiance occasionnelle (vent / oiseaux) : très discret, avec dégradé montée->descente.
   function playAmbient() {
@@ -851,6 +863,8 @@
       var wmov = Math.hypot(player.vx, player.vy) > 25;
       waterGain.gain.setTargetAtTime(onWater ? (wmov ? 0.32 : 0.13) : 0, AC.currentTime, 0.15);
     }
+    // ronflement : monte quand on dort dans la tente, s'estompe au réveil.
+    if (AC && snoreGain) snoreGain.gain.setTargetAtTime(inTent ? 0.4 : 0, AC.currentTime, 0.3);
 
     // tente : Z's du sommeil qui s'envolent quand on dort dedans
     if (inTent) { zAccum += dt; if (zAccum >= 0.85) { zAccum = 0; spawnZ(); } }
