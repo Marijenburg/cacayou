@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.19.0';
+  var VERSION = '0.20.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -956,6 +956,30 @@
       }
     }
 
+    // Herbe qui gigote au passage : les entités qui BOUGENT (joueur, monstre,
+    // créatures) impulsent une oscillation aux touffes proches ; elle décroît seule.
+    var dist = [];
+    if (Math.hypot(player.vx, player.vy) > 14 && !onWater) dist.push({ x: player.x, y: player.y, d: player.vx >= 0 ? 1 : -1 });
+    var mmx = monster.tx - monster.x;
+    if (Math.abs(mmx) + Math.abs(monster.ty - monster.y) > 4) dist.push({ x: monster.x, y: monster.y, d: mmx >= 0 ? 1 : -1 });
+    for (var wj = 0; wj < walkers.length; wj++) {
+      var wo = walkers[wj], wmx = wo.tx - wo.x;
+      if (Math.abs(wmx) + Math.abs(wo.ty - wo.y) > 5) dist.push({ x: wo.x, y: wo.y, d: wmx >= 0 ? 1 : -1 });
+    }
+    for (var gj = 0; gj < grassActive.length; gj++) {
+      var gt = grassActive[gj];
+      if (gt.wig > 0.002) { gt.wph += dt * 13; gt.wig *= Math.pow(0.06, dt); } // oscille + décroît (~1s)
+      else gt.wig = 0;
+      for (var ei = 0; ei < dist.length; ei++) {
+        var ex = dist[ei].x - gt.x, ey = dist[ei].y - gt.y;
+        if (ex * ex + ey * ey < 900) { // rayon 30px
+          if (gt.wig < 0.001) gt.wph = 0;
+          gt.wig = Math.min(1, gt.wig + 0.9);
+          gt.wdir = dist[ei].d;
+        }
+      }
+    }
+
     reveal();
 
     // auto-sauvegarde périodique
@@ -1038,6 +1062,10 @@
       ctx.save();
       ctx.translate(sx, sy);
       if (g.flip) ctx.scale(-1, 1);
+      if (g.wig > 0.002) { // cisaillement du haut (base fixe) -> la touffe gigote
+        var shear = g.wig * (0.12 * (g.wdir || 1) + 0.30 * Math.sin(g.wph));
+        ctx.transform(1, 0, shear, 1, 0, 0);
+      }
       ctx.drawImage(im, -w / 2, -h, w, h); // ancré bas-centre
       ctx.restore();
     }
@@ -1532,7 +1560,8 @@
     var cam = camera();
 
     // Base plein écran (herbe) : couvre toujours l'écran, indépendant du zoom.
-    ctx.fillStyle = '#c2e0a6';
+    // Vert un peu plus riche/saturé pour se marier avec les touffes dessinées (#798b64).
+    ctx.fillStyle = '#b6e09e';
     ctx.fillRect(0, 0, W, H);
 
     ctx.save();
@@ -1601,6 +1630,15 @@
     if (dark > 0.001) {
       ctx.fillStyle = 'rgba(20,28,58,' + (dark * 0.6).toFixed(3) + ')';
       ctx.fillRect(0, 0, W, H);
+    }
+    // Léger voile lumineux le jour (s'efface la nuit) -> rend le monde un peu plus lumineux.
+    var lift = (1 - dark) * 0.09;
+    if (lift > 0.002) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = 'rgba(255,250,226,' + lift.toFixed(3) + ')';
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
     }
     drawCampLight(cam, dark, zoom);
     renderFog(cam, zoom);
