@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.18.0';
+  var VERSION = '0.19.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -143,6 +143,9 @@
     boat: 'assets/boat.png',            // voilier dessiné par Elaijah (voile rose + emblème croco)
     tent: 'assets/tent.png',            // tente violette d'Elaijah (on y dort)
     zzz: 'assets/zzz.png',              // Z du sommeil (détouré + passé en blanc)
+    // Touffes d'herbe dessinées à la main par Charlie (détourées), semées en RNG au sol.
+    grass1: 'assets/grass1.png', grass2: 'assets/grass2.png', grass3: 'assets/grass3.png', grass4: 'assets/grass4.png',
+    grass5: 'assets/grass5.png', grass6: 'assets/grass6.png', grass7: 'assets/grass7.png', grass8: 'assets/grass8.png',
   };
   var IMG = {};
   Object.keys(ASSETS).forEach(function (k) { var im = new Image(); im.src = ASSETS[k]; IMG[k] = im; });
@@ -172,7 +175,20 @@
       if (isTree) { deco.hp = 5; deco.dead = false; deco.felling = null; } // 5 coups pour l'abattre
       list.push(deco);
     }
-    return { decos: list };
+    // Touffes d'herbe : couche décor au sol, sans collision ni nav, semées denses en RNG.
+    // Flux aléatoire SÉPARÉ (xor sur la graine) pour ne PAS décaler le placement arbres/rochers.
+    var grnd = mulberry32((hashChunk(cx, cy) ^ 0x9e3779b9) >>> 0);
+    var grass = [];
+    var gcount = 14 + ((grnd() * 12) | 0);   // 14..25 touffes / chunk
+    for (var gi = 0; gi < gcount; gi++) {
+      var gx = (cx + grnd()) * CHUNK, gy = (cy + grnd()) * CHUNK;
+      var gk = 1 + ((grnd() * 8) | 0);        // grass1..grass8
+      var gsc = 0.72 + grnd() * 0.6;          // taille variable
+      var gflip = grnd() < 0.5;
+      if (isWater(gx, gy)) continue;          // pas d'herbe sur l'eau (randoms déjà tirés = flux stable)
+      grass.push({ x: gx, y: gy, key: 'grass' + gk, s: gsc, flip: gflip });
+    }
+    return { decos: list, grass: grass };
   }
   function ensureChunk(cx, cy) {
     var k = cx + ',' + cy;
@@ -186,6 +202,7 @@
   // travail courant (toutes les boucles existantes itèrent dessus). Reconstruit
   // quand le joueur avance assez -> coût par frame constant sur un monde infini.
   var decos = [];
+  var grassActive = [];  // touffes d'herbe des chunks visibles (couche sol, pas de collision)
   var refCellX = null, refCellY = null;
   var REFRESH = 256;     // seuil de reconstruction de la fenêtre (px monde)
   function refreshActive() {
@@ -193,12 +210,14 @@
     var cx0 = Math.floor((cam.x - m) / CHUNK), cx1 = Math.floor((cam.x + W + m) / CHUNK);
     var cy0 = Math.floor((cam.y - m) / CHUNK), cy1 = Math.floor((cam.y + H + m) / CHUNK);
     decos = [];
+    grassActive = [];
     for (var cy = cy0; cy <= cy1; cy++) for (var cx = cx0; cx <= cx1; cx++) {
       var ch = ensureChunk(cx, cy);
       for (var i = 0; i < ch.decos.length; i++) {
         var d = ch.decos[i];
         if (!d.dead || d.felling != null) decos.push(d); // garde les arbres en pleine chute
       }
+      if (ch.grass) for (var gi = 0; gi < ch.grass.length; gi++) grassActive.push(ch.grass[gi]);
     }
     buildNav();
   }
@@ -1003,6 +1022,27 @@
     ctx.restore();
   }
 
+  // Couche d'herbe : touffes dessinées par Charlie, semées en RNG, ancrées par la
+  // base, rendues APRÈS l'eau et AVANT le tri des sprites (donc toujours au sol,
+  // derrière arbres/rochers/perso). Pas d'ombre : Charlie posera les siennes.
+  function drawGrassLayer(cam, zoom) {
+    var GRASS_H = 30; // hauteur cible à l'écran (world px) d'une touffe de taille 1
+    var vmL = W / 2 - (W / 2) / zoom - 120, vmR = W / 2 + (W / 2) / zoom + 120;
+    var vmT = H / 2 - (H / 2) / zoom - 120, vmB = H / 2 + (H / 2) / zoom + 120;
+    for (var i = 0; i < grassActive.length; i++) {
+      var g = grassActive[i];
+      var sx = g.x - cam.x, sy = g.y - cam.y;
+      if (sx < vmL || sx > vmR || sy < vmT || sy > vmB) continue;
+      var im = IMG[g.key]; if (!im || !im.naturalWidth) continue;
+      var h = GRASS_H * g.s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.save();
+      ctx.translate(sx, sy);
+      if (g.flip) ctx.scale(-1, 1);
+      ctx.drawImage(im, -w / 2, -h, w, h); // ancré bas-centre
+      ctx.restore();
+    }
+  }
+
   // Sprite de décor (sapin / rocher), ancré par sa base. Pas d'ombre : Charlie
   // fera les siennes (plus jolies) sur les assets.
   function drawSprite(deco, sx, sy) {
@@ -1501,6 +1541,7 @@
     ctx.translate(W / 2, H / 2); ctx.scale(zoom, zoom); ctx.translate(-W / 2, -H / 2);
 
     drawWater(cam, zoom);
+    drawGrassLayer(cam, zoom); // touffes d'herbe au sol (sous les entités)
 
     // Depth-sort : sapins/rochers + perso, triés par y (base) pour que le perso
     // passe devant ce qui est plus haut et derrière ce qui est plus bas. Culling
