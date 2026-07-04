@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.23.0';
+  var VERSION = '0.24.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -150,6 +150,8 @@
     boat: 'assets/boat.png',            // voilier dessiné par Elaijah (voile rose + emblème croco)
     tent: 'assets/tent.png',            // tente violette d'Elaijah (on y dort)
     zzz: 'assets/zzz.png',              // Z du sommeil (détouré + passé en blanc)
+    apple: 'assets/apple.png',          // pomme dessinée par Charlie + Elaijah
+
     // Touffes d'herbe dessinées à la main par Charlie (détourées), semées en RNG au sol.
     grass1: 'assets/grass1.png', grass2: 'assets/grass2.png', grass3: 'assets/grass3.png', grass4: 'assets/grass4.png',
     grass5: 'assets/grass5.png', grass6: 'assets/grass6.png', grass7: 'assets/grass7.png', grass8: 'assets/grass8.png',
@@ -179,7 +181,16 @@
       // Rayon de collision au SOL : tronc étroit pour les arbres, corps plus large pour les rochers.
       var cr = isTree ? 9 * s : 15 * s;
       var deco = { id: id, ck: cx + ',' + cy, key: key, type: isTree ? 'tree' : 'rock', x: x, y: y, s: s, cr: cr };
-      if (isTree) { deco.hp = 5; deco.dead = false; deco.felling = null; } // 5 coups pour l'abattre
+      if (isTree) {
+        deco.hp = 5; deco.dead = false; deco.felling = null; // 5 coups pour l'abattre
+        // Pommes : flux aléatoire SÉPARÉ par arbre (ne décale pas le gen du monde).
+        // Toujours MOINS de pommes que de coups (max 3 < 5) -> on peut récolter sans abattre.
+        var ar = mulberry32((hashChunk(cx, cy) ^ ((i + 7) * 0x9e3779b9)) >>> 0);
+        var orig = (ar() < 0.4) ? (1 + ((ar() * 3) | 0)) : 0;   // 0..3
+        deco.appleSlots = [];
+        for (var aj = 0; aj < orig; aj++) deco.appleSlots.push({ ox: (ar() - 0.5) * 0.5, oy: 0.28 + ar() * 0.34 });
+        deco.apples = Math.max(0, orig - (pickedApples[id] || 0));
+      }
       list.push(deco);
     }
     // Touffes d'herbe : couche décor au sol, sans collision ni nav, semées denses en RNG.
@@ -256,6 +267,34 @@
   // Bûches ramassables (drop d'un arbre abattu). z = hauteur du hop de spawn.
   var logs = [];
   var logCount = 0;
+  // Pommes : collectibles au sol + compteur + état de récolte persistant par arbre.
+  var groundApples = [], appleCount = 0, eating = 0;
+  var pickedApples = {};   // id d'arbre -> nb de pommes déjà récoltées (persiste)
+  var APPLE_COLS = ['#d94f3a', '#e0c043', '#e88a2a', '#7fae5b'];
+  // Réglages joueur (persistés) : volume + luminosité.
+  var userVolume = 1, userBright = 1, masterGain = null;
+  function spawnApple(wx, wy) {
+    groundApples.push({
+      x: wx + (Math.random() - 0.5) * 12, y: wy + (Math.random() - 0.5) * 8,
+      vx: (Math.random() - 0.5) * 34, vy: (Math.random() - 0.5) * 14,
+      z: 12 + Math.random() * 10, vz: 45 + Math.random() * 45,
+      sz: 0.9 + Math.random() * 0.25, grounded: false, t: 0
+    });
+  }
+  function spawnAppleBits(wx, wy, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 35 + Math.random() * 130;
+      parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 30 - Math.random() * 70,
+        life: 0.3 + Math.random() * 0.35, t: 0, c: APPLE_COLS[(Math.random() * APPLE_COLS.length) | 0],
+        w: 2 + Math.random() * 2.5, h: 2 + Math.random() * 2.5, rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 12 });
+    }
+  }
+  function eatApple() {
+    if (appleCount <= 0) return;
+    appleCount--; eating = 0.6;
+    spawnAppleBits(player.x, player.y - 24, 9);
+    floater('miam', player.x, player.y - 50);
+  }
   function spawnLogs(wx, wy, dir) {
     dir = dir || 1;                          // sens de chute de l'arbre (horizontal)
     var n = 2 + ((Math.random() * 2) | 0);   // 2 ou 3
@@ -318,6 +357,7 @@
   function initAudio() {
     if (AC) { if (AC.state === 'suspended') { try { AC.resume(); } catch (e) {} } return; }
     try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; return; }
+    masterGain = AC.createGain(); masterGain.gain.value = userVolume; masterGain.connect(AC.destination); // volume maître
     ambNextT = T + 5; // 1re ambiance ~5 s après le démarrage du son
     Object.keys(SFX).forEach(function (name) {
       fetch(SFX[name]).then(function (r) { return r.ok ? r.arrayBuffer() : Promise.reject(); })
@@ -344,14 +384,14 @@
     waterSrc = AC.createBufferSource(); waterSrc.buffer = waterBuf; waterSrc.loop = true;
     waterSrc.playbackRate.value = 0.8; // pitch abaissé -> impression de "grandes eaux"
     waterGain = AC.createGain(); waterGain.gain.value = 0;
-    waterSrc.connect(waterGain); waterGain.connect(AC.destination);
+    waterSrc.connect(waterGain); waterGain.connect(masterGain || AC.destination);
     try { waterSrc.start(); } catch (e) {}
   }
   function startSnoreLoop() {
     if (!AC || !snoreBuf || snoreSrc) return;
     snoreSrc = AC.createBufferSource(); snoreSrc.buffer = snoreBuf; snoreSrc.loop = true;
     snoreGain = AC.createGain(); snoreGain.gain.value = 0;
-    snoreSrc.connect(snoreGain); snoreGain.connect(AC.destination);
+    snoreSrc.connect(snoreGain); snoreGain.connect(masterGain || AC.destination);
     try { snoreSrc.start(); } catch (e) {}
   }
   // Ambiance occasionnelle (vent / oiseaux) : très discret, avec dégradé montée->descente.
@@ -369,7 +409,7 @@
     g.gain.linearRampToValueAtTime(peak, t0 + Math.min(fadeIn, dur * 0.45));
     g.gain.setValueAtTime(peak, t0 + Math.max(fadeIn, dur - fadeOut));
     g.gain.linearRampToValueAtTime(0.0001, t0 + dur);
-    src.connect(g); g.connect(AC.destination);
+    src.connect(g); g.connect(masterGain || AC.destination);
     try { src.start(t0); src.stop(t0 + dur + 0.1); } catch (e) {}
   }
   function playSound(name, rate, gain, delay) {
@@ -377,7 +417,7 @@
     var s = AC.createBufferSource(); s.buffer = sfxBuf[name];
     s.playbackRate.value = rate || 1;
     var g = AC.createGain(); g.gain.value = (gain == null ? 0.8 : gain);
-    s.connect(g); g.connect(AC.destination);
+    s.connect(g); g.connect(masterGain || AC.destination);
     try { s.start(AC.currentTime + (delay || 0)); } catch (e) {}
   }
   function playStep() {
@@ -509,6 +549,7 @@
       pinchDist0 = Math.hypot(a.x - b.x, a.y - b.y) || 1; pinchZoom0 = zoom;
     } else {
       pointer.active = true;
+      pointer.sx = e.clientX; pointer.sy = e.clientY;
       marker = pointToWorld(e);
       goActive = false;
     }
@@ -532,8 +573,13 @@
     pointer.active = false;
     if (!marker) return;
     var mx = marker.x, my = marker.y;
+    // 0-pomme) clic sur le compteur de pommes (espace écran) = manger une pomme.
+    if (appleCount > 0 && pointer.sx >= APPLE_HUD.x && pointer.sx <= APPLE_HUD.x + APPLE_HUD.w &&
+        pointer.sy >= APPLE_HUD.y && pointer.sy <= APPLE_HUD.y + APPLE_HUD.h) { eatApple(); marker = null; return; }
     // 0) réveil si on dort ; un clic sur la tente = juste se réveiller.
     if (inTent) { exitTent(); if (tentAt(mx, my)) { marker = null; return; } }
+    // 0c) clic sur une créature quand on a des pommes = lui en donner une.
+    if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { startAction('feed', cre, 42); return; } }
     // 0b) clic sur la tente (éveillé) = aller dormir.
     if (!inTent && tentAt(mx, my)) { startAction('sleep', tent, tent.cr + PR + 12); return; }
     // 1) clic sur la hache au sol ?
@@ -567,6 +613,17 @@
       if (mx > d.x - w * 0.5 && mx < d.x + w * 0.5 && my > d.y - h && my < d.y + 6) {
         if (!best || d.y > best.y) best = d;
       }
+    }
+    return best;
+  }
+  // Créature sous le point (mx,my) : monstre, panthère, tortues, walkers.
+  function creatureAt(mx, my) {
+    var list = [monster, panther, turtle, gturtle];
+    for (var i = 0; i < walkers.length; i++) list.push(walkers[i]);
+    var best = null, bestD = 40;
+    for (var j = 0; j < list.length; j++) {
+      var c = list[j], dd = Math.hypot(mx - c.x, my - (c.y - 14));
+      if (dd < bestD) { bestD = dd; best = c; }
     }
     return best;
   }
@@ -610,6 +667,12 @@
       startSwing(a.target);
     } else if (a.type === 'sleep') {
       enterTent();
+    } else if (a.type === 'feed') {
+      if (appleCount > 0 && a.target) {
+        appleCount--;
+        spawnAppleBits(a.target.x, a.target.y - 16, 11);
+        floater('miam', a.target.x, a.target.y - 40);
+      }
     }
   }
   function startSwing(tree) {
@@ -649,6 +712,7 @@
       if (ek.length > 120000) return; // garde-fou taille de sauvegarde
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         v: 1, px: player.x, py: player.y, logCount: logCount,
+        appleCount: appleCount, picked: pickedApples,
         hasAxe: hasAxe, axePicked: axe.picked,
         explored: ek, removed: Object.keys(removedTrees)
       }));
@@ -659,6 +723,7 @@
     removedTrees = {}; if (s.removed) for (var j = 0; j < s.removed.length; j++) removedTrees[s.removed[j]] = 1;
     chunks = {};
     logCount = s.logCount || 0; hasAxe = !!s.hasAxe; axe.picked = !!s.axePicked;
+    appleCount = s.appleCount || 0; pickedApples = s.picked || {}; groundApples.length = 0;
     player.x = s.px || HOME.x; player.y = s.py || HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null; refreshActive();
   }
@@ -666,6 +731,7 @@
     explored = {}; removedTrees = {}; chunks = {};
     logs.length = 0; parts.length = 0; floaters.length = 0;
     logCount = 0; hasAxe = false; axe.picked = false;
+    appleCount = 0; pickedApples = {}; groundApples.length = 0;
     player.x = HOME.x; player.y = HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
@@ -890,6 +956,11 @@
         var tr = swing.tree; tr.wobbleT0 = T;
         if (tr.hp != null) tr.hp -= 1;
         var fell = (tr.hp != null && tr.hp <= 0 && !tr.dead);
+        // une pomme visible tombe à chaque coup (s'il en reste)
+        if (tr.apples > 0) {
+          tr.apples--; pickedApples[tr.id] = (pickedApples[tr.id] || 0) + 1;
+          spawnApple(tr.x, tr.y - TARGET_H.tree * tr.s * 0.55);
+        }
         // pitch + volume variés à chaque coup ; le coup FATAL = le plus fort + le plus aigu.
         var pitch = fell ? 1.28 : (0.88 + Math.random() * 0.26);
         var vol = fell ? 1.0 : (0.55 + Math.random() * 0.35);
@@ -1072,6 +1143,19 @@
       }
     }
 
+    // pommes au sol : petit saut de chute, puis ramassables à proximité.
+    for (var gai = groundApples.length - 1; gai >= 0; gai--) {
+      var ga = groundApples[gai]; ga.t += dt;
+      if (!ga.grounded) {
+        ga.z += ga.vz * dt; ga.vz -= 300 * dt;
+        ga.x += ga.vx * dt; ga.y += ga.vy * dt; ga.vx *= 0.9; ga.vy *= 0.9;
+        if (ga.z <= 0) { ga.z = 0; ga.vz = 0; ga.grounded = true; }
+      } else if (Math.hypot(player.x - ga.x, player.y - ga.y) < 28) {
+        appleCount++; floater('+1 pomme', ga.x, ga.y - 22); spawnAppleBits(ga.x, ga.y - 6, 6); groundApples.splice(gai, 1);
+      }
+    }
+    if (eating > 0) eating -= dt;
+
     // Herbe qui gigote au passage : les entités qui BOUGENT (joueur, monstre,
     // créatures) impulsent une oscillation aux touffes proches ; elle décroît seule.
     var dist = [];
@@ -1215,6 +1299,31 @@
     } else {
       ctx.drawImage(im, sx - w / 2, sy - h, w, h);
     }
+    // pommes visibles sur la canopée
+    if (deco.type === 'tree' && deco.apples > 0 && deco.appleSlots && IMG.apple && IMG.apple.naturalWidth) {
+      var aw = 12 * deco.s, aih = aw * (IMG.apple.naturalHeight / IMG.apple.naturalWidth);
+      for (var qa = 0; qa < deco.apples && qa < deco.appleSlots.length; qa++) {
+        var slot = deco.appleSlots[qa];
+        ctx.drawImage(IMG.apple, sx + slot.ox * w - aw / 2, sy - h + slot.oy * h - aih / 2, aw, aih);
+      }
+    }
+  }
+  // Pomme au sol (collectible) : petite, ombre + hauteur de saut z.
+  function drawGroundApple(ap, sx, sy) {
+    var im = IMG.apple; if (!im || !im.complete || !im.naturalWidth) return;
+    var h = 16 * ap.sz, w = h * (im.naturalWidth / im.naturalHeight);
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 6 * ap.sz, 2.4 * ap.sz, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.drawImage(im, sx - w / 2, sy - ap.z - h, w, h);
+  }
+  // Animation de "manger" : une pomme rétrécit au-dessus du perso.
+  function drawEating(sx, sy) {
+    if (eating <= 0) return;
+    var im = IMG.apple; if (!im || !im.naturalWidth) return;
+    var k = eating / 0.6, h = 15 * k, w = h * (im.naturalWidth / im.naturalHeight);
+    ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.4);
+    ctx.drawImage(im, sx - w / 2, sy - 34 - h / 2, w, h);
+    ctx.restore();
   }
 
   // Perso principal = personnage assemblé (dessin de Charlie) : chaussures →
@@ -1603,6 +1712,23 @@
     ctx.restore();
   }
 
+  // Compteur de pommes (sous les bûches) — CLIQUABLE : taper dessus = manger une pomme.
+  var APPLE_HUD = { x: 16, y: 92, w: 86, h: 32 };
+  function drawAppleHud() {
+    var x = APPLE_HUD.x, y = APPLE_HUD.y;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.strokeStyle = 'rgba(59,90,46,0.5)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.rect(x, y, APPLE_HUD.w, APPLE_HUD.h); ctx.fill(); ctx.stroke();
+    var im = IMG.apple;
+    if (im && im.complete && im.naturalWidth) {
+      var h = 22, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.drawImage(im, x + 9, y + APPLE_HUD.h / 2 - h / 2, w, h);
+    }
+    ctx.fillStyle = '#3b5a2e'; ctx.font = '700 16px system-ui, sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText('' + appleCount, x + 56, y + 22);
+    ctx.restore();
+  }
+
   // Animation de frappe placeholder : balayage de hache vers l'arbre.
   function drawSwing(sx, sy) {
     if (!swing) return;
@@ -1793,6 +1919,7 @@
     items.push({ y: player.y, sx: player.x - cam.x, sy: player.y - cam.y, player: true });
     if (!axe.picked) items.push({ y: axe.y, sx: axe.x - cam.x, sy: axe.y - cam.y, axe: true });
     for (var lgi = 0; lgi < logs.length; lgi++) { items.push({ y: logs[lgi].y, sx: logs[lgi].x - cam.x, sy: logs[lgi].y - cam.y, log: logs[lgi] }); }
+    for (var gapi = 0; gapi < groundApples.length; gapi++) { items.push({ y: groundApples[gapi].y, sx: groundApples[gapi].x - cam.x, sy: groundApples[gapi].y - cam.y, gapple: groundApples[gapi] }); }
     items.push({ y: campfire.y, sx: campfire.x - cam.x, sy: campfire.y - cam.y, campfire: true });
     items.push({ y: tent.y, sx: tent.x - cam.x, sy: tent.y - cam.y, tent: true });
     items.push({ y: monster.y, sx: monster.x - cam.x, sy: monster.y - cam.y, monster: true });
@@ -1806,6 +1933,7 @@
       if (it.player) { if (!inTent) { if (onWater) drawBoat(it.sx, it.sy); else drawPlayer(it.sx, it.sy); } }
       else if (it.axe) drawAxe(it.sx, it.sy);
       else if (it.log) drawLog(it.log, it.sx, it.sy);
+      else if (it.gapple) drawGroundApple(it.gapple, it.sx, it.sy);
       else if (it.campfire) drawCampfire(campfire, it.sx, it.sy);
       else if (it.tent) drawTent(tent, it.sx, it.sy);
       else if (it.monster) drawMonster(it.sx, it.sy);
@@ -1829,6 +1957,7 @@
     }
     if (occluded && !inTent) drawPlayerGhost(ppx, ppy);
     if (!inTent) drawSwing(ppx, ppy);
+    if (!inTent) drawEating(ppx, ppy);
     drawParts(cam);
     drawNavPath(cam);
     drawDestMarker(cam, now);
@@ -1852,6 +1981,13 @@
       ctx.fillRect(0, 0, W, H);
       ctx.restore();
     }
+    // Luminosité réglable par le joueur (Settings) : <1 assombrit, >1 éclaircit.
+    if (userBright < 0.99) {
+      ctx.fillStyle = 'rgba(8,12,6,' + ((1 - userBright) * 0.8).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H);
+    } else if (userBright > 1.01) {
+      ctx.save(); ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = 'rgba(255,251,230,' + ((userBright - 1) * 0.6).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H); ctx.restore();
+    }
     drawCampLight(cam, dark, zoom);
     renderFog(cam, zoom);
 
@@ -1859,7 +1995,45 @@
     renderMiniMap();
     drawAxeHud();
     drawLogHud();
+    drawAppleHud();
   }
+
+  // ── Réglages (Settings) : volume, luminosité, téléport au feu de camp ──────
+  function teleportCampfire() {
+    player.x = campfire.x; player.y = campfire.y + 34; player.vx = 0; player.vy = 0;
+    if (inTent) exitTent();
+    navPath = null; goActive = false; marker = null; pendingAction = null; pointer.active = false;
+    refCellX = null; refCellY = null; refreshActive();
+    floater('feu de camp', player.x, player.y - 46);
+  }
+  (function setupSettings() {
+    if (typeof document === 'undefined') return;
+    var SKEY = 'cacayou_settings_v1';
+    try {
+      var s = JSON.parse(localStorage.getItem(SKEY) || '{}');
+      if (typeof s.vol === 'number') userVolume = s.vol;
+      if (typeof s.bright === 'number') userBright = s.bright;
+    } catch (e) {}
+    function save() { try { localStorage.setItem(SKEY, JSON.stringify({ vol: userVolume, bright: userBright })); } catch (e) {} }
+    var btn = document.getElementById('settingsBtn'), panel = document.getElementById('settings');
+    var vol = document.getElementById('volRange'), volV = document.getElementById('volVal');
+    var br = document.getElementById('brightRange'), brV = document.getElementById('brightVal');
+    var tp = document.getElementById('tpBtn'), closeB = document.getElementById('closeSet');
+    if (!btn || !panel) return;
+    if (vol) { vol.value = Math.round(userVolume * 100); if (volV) volV.textContent = vol.value + '%'; }
+    if (br) { br.value = Math.round(userBright * 100); if (brV) brV.textContent = br.value + '%'; }
+    btn.addEventListener('click', function () { panel.classList.add('open'); });
+    if (closeB) closeB.addEventListener('click', function () { panel.classList.remove('open'); });
+    panel.addEventListener('click', function (e) { if (e.target === panel) panel.classList.remove('open'); });
+    if (vol) vol.addEventListener('input', function () {
+      userVolume = (+vol.value) / 100; if (volV) volV.textContent = vol.value + '%';
+      if (masterGain) masterGain.gain.value = userVolume; save();
+    });
+    if (br) br.addEventListener('input', function () {
+      userBright = (+br.value) / 100; if (brV) brV.textContent = br.value + '%'; save();
+    });
+    if (tp) tp.addEventListener('click', function () { teleportCampfire(); panel.classList.remove('open'); });
+  })();
 
   // Amorce le monde (décors + nav) autour de la maison avant la 1re frame.
   var booted = false;

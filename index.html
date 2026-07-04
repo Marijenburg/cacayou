@@ -36,11 +36,56 @@
     }
     #playBtn.secondary:active { box-shadow: 0 2px 0 #6d9a54, 0 4px 8px rgba(0,0,0,0.12); }
     #ver { position: absolute; bottom: 12px; font: 11px monospace; color: #4e7a3a; opacity: 0.6; }
+    #settingsBtn {
+      position: fixed; top: env(safe-area-inset-top, 8px); right: 48px; z-index: 10;
+      color: #3b5a2e; background: rgba(255,255,255,0.6); border: 1px solid rgba(59,90,46,0.3);
+      border-radius: 8px; width: 34px; height: 30px; font: 17px system-ui, sans-serif;
+      cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center;
+    }
+    #settings {
+      position: fixed; inset: 0; z-index: 30; display: none;
+      align-items: center; justify-content: center; padding: 24px; background: rgba(20,30,16,0.55);
+    }
+    #settings.open { display: flex; }
+    #settingsPanel {
+      background: #eef6e4; color: #34502a; border-radius: 16px; padding: 20px 22px;
+      width: 100%; max-width: 340px; box-shadow: 0 12px 30px rgba(0,0,0,0.3);
+      display: flex; flex-direction: column; gap: 16px;
+    }
+    #settingsPanel h2 { font-size: 20px; font-weight: 800; text-align: center; }
+    .set-row { display: flex; flex-direction: column; gap: 6px; }
+    .set-row label { font-size: 13px; font-weight: 700; opacity: 0.85; }
+    .set-row input[type=range] { width: 100%; accent-color: #6bab4e; height: 28px; }
+    #tpBtn {
+      padding: 12px; font-size: 15px; font-weight: 700; color: #fff; background: #6bab4e;
+      border: none; border-radius: 10px; cursor: pointer; box-shadow: 0 4px 0 #4e8437;
+    }
+    #tpBtn:active { transform: translateY(2px); box-shadow: 0 2px 0 #4e8437; }
+    #closeSet {
+      padding: 10px; font-size: 14px; font-weight: 700; color: #34502a; background: transparent;
+      border: 1px solid rgba(59,90,46,0.4); border-radius: 10px; cursor: pointer;
+    }
   </style>
 </head>
 <body>
   <canvas id="game"></canvas>
   <button id="fs" title="Fullscreen">&#9974;</button>
+  <button id="settingsBtn" title="Settings">&#9881;</button>
+  <div id="settings">
+    <div id="settingsPanel">
+      <h2>Settings</h2>
+      <div class="set-row">
+        <label>Volume : <span id="volVal">100%</span></label>
+        <input type="range" id="volRange" min="0" max="100" value="100">
+      </div>
+      <div class="set-row">
+        <label>Luminosité : <span id="brightVal">100%</span></label>
+        <input type="range" id="brightRange" min="50" max="150" value="100">
+      </div>
+      <button id="tpBtn">Téléporter au feu de camp</button>
+      <button id="closeSet">Fermer</button>
+    </div>
+  </div>
   <div id="title">
     <h1>Cacayou</h1>
     <button id="continueBtn" style="display:none">Continue</button>
