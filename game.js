@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.38.0';
+  var VERSION = '0.38.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -885,6 +885,7 @@
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         v: 1, px: player.x, py: player.y, logCount: logCount,
         appleCount: appleCount, picked: pickedApples, fuel: campfire.fuel,
+        bonded: { m: !!monster.bonded, p: !!panther.bonded, t: !!turtle.bonded, g: !!gturtle.bonded, w: walkers.map(function (x) { return !!x.bonded; }) },
         hasAxe: hasAxe, axePicked: axe.picked,
         explored: ek, removed: Object.keys(removedTrees)
       }));
@@ -897,6 +898,14 @@
     logCount = s.logCount || 0; hasAxe = !!s.hasAxe; axe.picked = !!s.axePicked;
     appleCount = s.appleCount || 0; pickedApples = s.picked || {}; groundApples.length = 0;
     campfire.fuel = (s.fuel != null) ? s.fuel : 55;
+    if (s.bonded) {
+      monster.bonded = !!s.bonded.m; panther.bonded = !!s.bonded.p; turtle.bonded = !!s.bonded.t; gturtle.bonded = !!s.bonded.g;
+      if (s.bonded.w) for (var bi = 0; bi < walkers.length && bi < s.bonded.w.length; bi++) walkers[bi].bonded = !!s.bonded.w[bi];
+      var camped = 0; // replace les apprivoisées autour du feu dès le chargement
+      [monster, panther, turtle, gturtle].concat(walkers).forEach(function (c) {
+        if (c.bonded) { var a = camped * 1.25 + 0.4, d = 42 + camped * 20; c.x = campfire.x + Math.cos(a) * d; c.y = campfire.y + Math.sin(a) * d; c.tx = c.x; c.ty = c.y; camped++; }
+      });
+    }
     player.x = s.px || HOME.x; player.y = s.py || HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null; refreshActive();
   }
@@ -905,6 +914,8 @@
     logs.length = 0; parts.length = 0; floaters.length = 0;
     logCount = 0; hasAxe = false; axe.picked = false;
     appleCount = 0; pickedApples = {}; groundApples.length = 0; campfire.fuel = 55;
+    monster.bonded = panther.bonded = turtle.bonded = gturtle.bonded = false;
+    walkers.forEach(function (x) { x.bonded = false; });
     player.x = HOME.x; player.y = HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
