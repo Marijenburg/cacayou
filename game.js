@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.33.0';
+  var VERSION = '0.33.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -1829,9 +1829,12 @@
   function pickIdle() { var r = Math.random(); return r < 0.4 ? 'sit' : (r < 0.72 ? 'look' : 'sleep'); }
   function applyIdlePose(mo, s) {
     if (!mo.idle || mo.idle === 'none') return;
-    if (mo.idle === 'sit') { ctx.translate(0, 5 * s); ctx.scale(1, 0.82); }           // s'assoit (plus bas + tassé)
-    else if (mo.idle === 'sleep') { ctx.translate(0, 7 * s); ctx.scale(1.08, 0.6 + Math.sin(T * 2.2) * 0.02); } // dodo (aplati + respire)
+    if (mo.idle === 'sit') { ctx.translate(0, 4 * s); }                                // s'assoit : simplement plus bas (aucune déformation)
     else if (mo.idle === 'look') { ctx.rotate(Math.sin(T * 1.5) * 0.1); }              // regarde autour (léger balancement)
+    else if (mo.idle === 'sleep') {                                                    // dodo : elle S'ALLONGE (rotation ~75°, pas d'écrasement)
+      var mid = -14 * s, br = Math.sin(T * 2.2) * 0.02; // léger "souffle"
+      ctx.translate(0, mid); ctx.rotate((mo.face >= 0 ? 1 : -1) * (1.3 + br)); ctx.translate(0, -mid);
+    }
   }
 
   // Panthère quadrupède (tête + corps + 4 pattes). Vue côté-ish comme les monstres.
