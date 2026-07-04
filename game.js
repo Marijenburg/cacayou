@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.22.0';
+  var VERSION = '0.23.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -425,6 +425,13 @@
     x: HOME.x + 500, y: HOME.y - 380,
     tx: HOME.x + 500, ty: HOME.y - 380,
     retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 0.95, step: 0
+  };
+
+  // Tortue VERTE (aquarelle de Charlie, grosse carapace) : autre rôdeuse très lente.
+  var gturtle = {
+    x: HOME.x - 470, y: HOME.y - 500,
+    tx: HOME.x - 470, ty: HOME.y - 500,
+    retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 1.0, step: 0
   };
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
@@ -1009,6 +1016,35 @@
       if (turtle.step >= 40) { turtle.step -= 40; walkerStep(turtle); }
     } else { turtle.phase += dt * 1.2; }
 
+    // tortue verte : même balade très lente, sur terre.
+    var gdx0 = gturtle.x - player.x, gdy0 = gturtle.y - player.y;
+    if (gdx0 * gdx0 + gdy0 * gdy0 > 1900 * 1900) {
+      var gang = Math.random() * Math.PI * 2;
+      for (var gti = 0; gti < 8; gti++) {
+        var gdd = 820 + Math.random() * 420;
+        var gnx = player.x + Math.cos(gang) * gdd, gny = player.y + Math.sin(gang) * gdd;
+        if (!isWater(gnx, gny)) { gturtle.x = gnx; gturtle.y = gny; gturtle.tx = gnx; gturtle.ty = gny; break; }
+        gang += 1.4;
+      }
+      gturtle.retarget = 0;
+    }
+    gturtle.retarget -= dt;
+    if (gturtle.retarget <= 0) {
+      gturtle.retarget = 4 + Math.random() * 6;
+      var gtta = Math.random() * Math.PI * 2, gttd = 180 + Math.random() * 360;
+      var gtx = gturtle.x + Math.cos(gtta) * gttd, gty = gturtle.y + Math.sin(gtta) * gttd;
+      if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
+    }
+    var gvx = gturtle.tx - gturtle.x, gvy = gturtle.ty - gturtle.y, gvd = Math.hypot(gvx, gvy);
+    if (gvd > 5) {
+      var gsp = 15;
+      gturtle.x += (gvx / gvd) * gsp * dt; gturtle.y += (gvy / gvd) * gsp * dt;
+      if (Math.abs(gvx) > 2) gturtle.face = gvx < 0 ? -1 : 1;
+      gturtle.phase += dt * 5;
+      gturtle.step += gsp * dt;
+      if (gturtle.step >= 42) { gturtle.step -= 42; walkerStep(gturtle); }
+    } else { gturtle.phase += dt * 1.2; }
+
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
 
@@ -1497,6 +1533,35 @@
     ctx.restore();
   }
 
+  // Tortue verte : grosse carapace centrale (aquarelle), tête à l'avant, 4 pattes.
+  function drawGreenTurtle(mo, sx, sy) {
+    if (!IMG.gt_shell || !IMG.gt_shell.complete || !IMG.gt_shell.naturalWidth) return;
+    var p = mo.phase, s = mo.sz, bob = Math.sin(p * 2) * 0.8, sw = 0.3;
+    function leg(key, ax, ay, th, base, ang) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.save(); ctx.translate(ax * s, ay * s); ctx.rotate(base + ang); ctx.drawImage(im, -w / 2, 0, w, h); ctx.restore();
+    }
+    function ctr(key, ax, ay, th) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.drawImage(im, ax * s - w / 2, ay * s - h / 2, w, h);
+    }
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 26 * s, 7 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (mo.face > 0) ctx.scale(-1, 1);
+    leg('gt_leg2', -16, -24, 16, -0.6, Math.sin(p + Math.PI) * sw);  // haut-gauche (fond)
+    leg('gt_leg4', 16, -24, 16, 0.6, Math.sin(p) * sw);             // haut-droite (fond)
+    ctr('gt_shell', 0, -20 + bob, 42);                              // carapace (grosse, centre)
+    ctr('gt_head', -25, -16 + bob, 20);                             // tête (avant/gauche)
+    leg('gt_leg1', -18, -12, 18, -0.5, Math.sin(p) * sw);           // bas-gauche (proche)
+    leg('gt_leg3', 18, -12, 18, 0.5, Math.sin(p + Math.PI) * sw);   // bas-droite (proche)
+    ctx.restore();
+  }
+
   // 1er monstre d'Elaijah : anim d'idle (respiration + dandinement + balancement).
   function drawMonster(sx, sy) {
     var im = IMG.monster;
@@ -1733,6 +1798,7 @@
     items.push({ y: monster.y, sx: monster.x - cam.x, sy: monster.y - cam.y, monster: true });
     items.push({ y: panther.y, sx: panther.x - cam.x, sy: panther.y - cam.y, panther: true });
     items.push({ y: turtle.y, sx: turtle.x - cam.x, sy: turtle.y - cam.y, turtle: true });
+    items.push({ y: gturtle.y, sx: gturtle.x - cam.x, sy: gturtle.y - cam.y, gturtle: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
@@ -1745,6 +1811,7 @@
       else if (it.monster) drawMonster(it.sx, it.sy);
       else if (it.panther) drawPanther(panther, it.sx, it.sy);
       else if (it.turtle) drawTurtle(turtle, it.sx, it.sy);
+      else if (it.gturtle) drawGreenTurtle(gturtle, it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
     }
