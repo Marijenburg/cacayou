@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.31.0';
+  var VERSION = '0.31.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -679,6 +679,23 @@
       cx2.globalCompositeOperation = 'source-in'; cx2.fillStyle = '#ffffff'; cx2.fillRect(0, 0, c.width, c.height);
       silCache[key] = c; return c;
     } catch (e) { silCache[key] = null; return null; }
+  }
+  // ANNEAU seul (contour) : silhouette à N offsets moins la silhouette centrale.
+  // Ainsi on ne redessine PAS le sprite (sinon "deux arbres" avec le wobble derrière).
+  var outlineCache = {};
+  function getOutline(key) {
+    if (key in outlineCache) return outlineCache[key];
+    var sil = getSilhouette(key);
+    if (!sil) return null;
+    try {
+      var r = 3, pad = r + 1;
+      var c = document.createElement('canvas'); c.width = sil.width + pad * 2; c.height = sil.height + pad * 2;
+      var g = c.getContext('2d');
+      for (var oi = 0; oi < 12; oi++) { var oa = oi / 12 * Math.PI * 2; g.drawImage(sil, pad + Math.cos(oa) * r, pad + Math.sin(oa) * r); }
+      g.globalCompositeOperation = 'destination-out'; g.drawImage(sil, pad, pad); // évide le centre
+      outlineCache[key] = { canvas: c, pad: pad };
+      return outlineCache[key];
+    } catch (e) { outlineCache[key] = null; return null; }
   }
 
   // Masque alpha d'un sprite (offscreen), pour un test de clic PIXEL-PRÉCIS.
@@ -1920,24 +1937,23 @@
   // Flash de sélection : anneau lumineux bref sur l'élément cliqué.
   function drawSelectFx(cam) {
     if (!selectFx) return;
-    var e = T - selectFx.t0; if (e > 0.5) { selectFx = null; return; }
-    var k = 1 - e / 0.5, s = selectFx;
+    var e = T - selectFx.t0; if (e > 0.32) { selectFx = null; return; } // court : ne traîne pas sur les frappes répétées
+    var k = 1 - e / 0.32, s = selectFx;
     if (s.key) {
-      // contour PRÉCIS : halo blanc autour des bords du sprite (arbre)
-      var sil = getSilhouette(s.key), im = IMG[s.key];
-      if (sil && im && im.naturalWidth) {
-        var dx = s.x - cam.x - s.w / 2, dy = s.y - cam.y - s.h, r = 2.6 + (1 - k) * 1.6;
-        ctx.save(); ctx.globalAlpha = k;
-        for (var oi = 0; oi < 10; oi++) { var oa = oi / 10 * Math.PI * 2; ctx.drawImage(sil, dx + Math.cos(oa) * r, dy + Math.sin(oa) * r, s.w, s.h); }
+      // contour PRÉCIS : uniquement l'anneau (pas de re-dessin du sprite)
+      var im = IMG[s.key], ol = getOutline(s.key);
+      if (ol && im && im.naturalWidth) {
+        var sc = s.w / im.naturalWidth;
+        var dx = s.x - cam.x - s.w / 2 - ol.pad * sc, dy = s.y - cam.y - s.h - ol.pad * sc;
+        ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.4);
+        ctx.drawImage(ol.canvas, dx, dy, ol.canvas.width * sc, ol.canvas.height * sc);
         ctx.restore();
-        ctx.drawImage(im, dx, dy, s.w, s.h); // le vrai sprite par-dessus -> ne reste que le halo aux bords
       }
     } else {
       // halo lumineux autour de l'élément (créature / tente / hache)
-      ctx.save(); ctx.globalAlpha = k; ctx.strokeStyle = '#eafff0'; ctx.lineWidth = 3;
+      ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.4); ctx.strokeStyle = '#eafff0'; ctx.lineWidth = 3;
       ctx.shadowColor = '#8ef0a8'; ctx.shadowBlur = 9;
-      var pr = 1 + (1 - k) * 0.14;
-      ctx.beginPath(); ctx.ellipse(s.x - cam.x, s.y - cam.y, s.rx * pr, s.ry * pr, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(s.x - cam.x, s.y - cam.y, s.rx, s.ry, 0, 0, Math.PI * 2); ctx.stroke();
       ctx.restore();
     }
   }
