@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.20.0';
+  var VERSION = '0.21.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -135,6 +135,10 @@
     mm_body: 'assets/mm_body.png', mm_head: 'assets/mm_head.png',
     mm_armL: 'assets/mm_armL.png', mm_armR: 'assets/mm_armR.png',
     mm_legL: 'assets/mm_legL.png', mm_legR: 'assets/mm_legR.png',
+    // Panthère de Charlie (riggée en pièces) : tête, corps, 4 pattes.
+    pan_head: 'assets/pan_head.png', pan_body: 'assets/pan_body.png',
+    pan_legFrontNear: 'assets/pan_legFrontNear.png', pan_legFrontFar: 'assets/pan_legFrontFar.png',
+    pan_legBackNear: 'assets/pan_legBackNear.png', pan_legBackFar: 'assets/pan_legBackFar.png',
     heroHead: 'assets/hero_head.png',   // perso principal (dessiné par Charlie) : tête de croco
     heroBody: 'assets/hero_body.png',
     heroPack: 'assets/hero_pack.png',   // sac à dos + matelas rose
@@ -404,6 +408,14 @@
       walkers.push({ x: wx, y: wy, hx: wx, hy: wy, tx: wx, ty: wy, retarget: 0, phase: Math.random() * 6, face: 1, sz: 0.85 + Math.random() * 0.35, foot: 0 });
     }
   })();
+
+  // Panthère (dessinée par Charlie, riggée en pièces) : une rôdeuse qui se balade
+  // à différents endroits de la map, avec une démarche de panthère.
+  var panther = {
+    x: HOME.x - 520, y: HOME.y + 430,
+    tx: HOME.x - 520, ty: HOME.y + 430,
+    retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 1.15, step: 0
+  };
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
   var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
@@ -929,6 +941,35 @@
       } else { mo.phase += dt * 2.2; mo.foot = Math.floor(mo.phase / Math.PI); }
     }
 
+    // panthère : rôde vers des points variés autour du joueur (prowl lent), sur terre.
+    var pdx0 = panther.x - player.x, pdy0 = panther.y - player.y;
+    if (pdx0 * pdx0 + pdy0 * pdy0 > 1900 * 1900) { // trop loin -> réapparaît hors écran autour du joueur
+      var pang = Math.random() * Math.PI * 2;
+      for (var pti = 0; pti < 8; pti++) {
+        var pdd = 850 + Math.random() * 420;
+        var pnx = player.x + Math.cos(pang) * pdd, pny = player.y + Math.sin(pang) * pdd;
+        if (!isWater(pnx, pny)) { panther.x = pnx; panther.y = pny; panther.tx = pnx; panther.ty = pny; break; }
+        pang += 1.4;
+      }
+      panther.retarget = 0;
+    }
+    panther.retarget -= dt;
+    if (panther.retarget <= 0) {
+      panther.retarget = 3 + Math.random() * 5;
+      var pta = Math.random() * Math.PI * 2, ptd = 260 + Math.random() * 540;
+      var pntx = panther.x + Math.cos(pta) * ptd, pnty = panther.y + Math.sin(pta) * ptd;
+      if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
+    }
+    var pvx = panther.tx - panther.x, pvy = panther.ty - panther.y, pvd = Math.hypot(pvx, pvy);
+    if (pvd > 5) {
+      var psp = 40; // prowl
+      panther.x += (pvx / pvd) * psp * dt; panther.y += (pvy / pvd) * psp * dt;
+      if (Math.abs(pvx) > 2) panther.face = pvx < 0 ? -1 : 1;
+      panther.phase += dt * 7;
+      panther.step += psp * dt;
+      if (panther.step >= 62) { panther.step -= 62; walkerStep(panther); }
+    } else { panther.phase += dt * 1.6; }
+
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
 
@@ -1356,6 +1397,37 @@
     ctx.restore();
   }
 
+  // Panthère quadrupède (tête + corps + 4 pattes). Vue côté-ish comme les monstres.
+  // Trot : les pattes en diagonale bougent ensemble (frontNear+backFar / frontFar+backNear).
+  // Le dessin regarde à GAUCHE par défaut -> on miroite quand elle marche à droite.
+  function drawPanther(mo, sx, sy) {
+    if (!IMG.pan_body || !IMG.pan_body.complete || !IMG.pan_body.naturalWidth) return;
+    var p = mo.phase, s = mo.sz, bob = Math.sin(p * 2) * 1.4, sw = 0.5;
+    function leg(key, ax, ay, th, ang) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.save(); ctx.translate(ax * s, ay * s); ctx.rotate(ang); ctx.drawImage(im, -w / 2, 0, w, h); ctx.restore();
+    }
+    function ctr(key, ax, ay, th) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.drawImage(im, ax * s - w / 2, ay * s - h / 2, w, h);
+    }
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 26 * s, 7 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (mo.face > 0) ctx.scale(-1, 1);
+    leg('pan_legBackFar', 15, -19, 30, Math.sin(p) * sw);              // patte fond arrière
+    leg('pan_legFrontFar', -15, -19, 28, Math.sin(p + Math.PI) * sw);  // patte fond avant
+    ctr('pan_body', 0, -24 + bob, 34);                                 // corps
+    ctr('pan_head', -23, -30 + bob * 1.1, 27);                         // tête (à l'avant/gauche)
+    leg('pan_legBackNear', 12, -17, 33, Math.sin(p + Math.PI) * sw);   // patte proche arrière
+    leg('pan_legFrontNear', -12, -17, 31, Math.sin(p) * sw);           // patte proche avant
+    ctx.restore();
+  }
+
   // 1er monstre d'Elaijah : anim d'idle (respiration + dandinement + balancement).
   function drawMonster(sx, sy) {
     var im = IMG.monster;
@@ -1590,6 +1662,7 @@
     items.push({ y: campfire.y, sx: campfire.x - cam.x, sy: campfire.y - cam.y, campfire: true });
     items.push({ y: tent.y, sx: tent.x - cam.x, sy: tent.y - cam.y, tent: true });
     items.push({ y: monster.y, sx: monster.x - cam.x, sy: monster.y - cam.y, monster: true });
+    items.push({ y: panther.y, sx: panther.x - cam.x, sy: panther.y - cam.y, panther: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
@@ -1600,6 +1673,7 @@
       else if (it.campfire) drawCampfire(campfire, it.sx, it.sy);
       else if (it.tent) drawTent(tent, it.sx, it.sy);
       else if (it.monster) drawMonster(it.sx, it.sy);
+      else if (it.panther) drawPanther(panther, it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
     }
