@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.37.0';
+  var VERSION = '0.38.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -542,6 +542,11 @@
 
   var FOLLOW_DIST = 82; // distance de suivi quand une créature nourrie nous suit (pas collée)
 
+  // Météo : alterne clair / pluie procédurale (ambiance + abri qui prend du sens).
+  var weather = { state: 'clear', t: 25 + Math.random() * 40, rain: 0 };
+  var rainDrops = [];
+  for (var _rdi = 0; _rdi < 150; _rdi++) rainDrops.push({ x: Math.random(), y: Math.random(), len: 8 + Math.random() * 10, sp: 0.9 + Math.random() * 0.6 });
+
   // Ballon près du camp : le perso le percute -> petit saut + part à l'opposé, roule court.
   var ball = { x: HOME.x + 40, y: HOME.y + 120, vx: 0, vy: 0, z: 0, vz: 0, r: 15, rot: 0, vrot: 0, kickCd: 0 };
   var hearts = [], heartAlt = 0; // petits coeurs (2 variantes alternées) au-dessus des créatures nourries
@@ -825,6 +830,7 @@
         a.target.eat = 1.5;      // la créature s'arrête et mange pendant ce temps
         a.target.follow = 10;    // puis elle nous suit un moment (rafraîchi à chaque pomme)
         a.target.idle = 'none'; a.target.idleT = 0; // réveil si elle dormait/idle
+        a.target.bonded = true;  // apprivoisée : elle traînera désormais autour du camp
         spawnAppleBits(a.target.x, a.target.y - 16, 12);
         spawnHeart(a.target.x, a.target.y - 54, 0);      // cœurs animés, alternés + étalés (bien AU-DESSUS de la tête)
         spawnHeart(a.target.x, a.target.y - 50, 0.4);
@@ -1189,7 +1195,7 @@
     for (var wk = 0; wk < walkers.length; wk++) {
       var mo = walkers[wk];
       var rdx = mo.x - player.x, rdy = mo.y - player.y;
-      if (rdx * rdx + rdy * rdy > 1750 * 1750) { // trop loin -> réapparaît hors écran autour du joueur (sur terre)
+      if (!mo.bonded && rdx * rdx + rdy * rdy > 1750 * 1750) { // trop loin -> réapparaît (sauf apprivoisée : reste au camp)
         var rang = Math.random() * Math.PI * 2;
         for (var rti = 0; rti < 6; rti++) {
           var rdd = 780 + Math.random() * 320;
@@ -1204,7 +1210,7 @@
       if (mo.retarget <= 0 && !(mo.follow > 0)) {
         mo.retarget = 2 + Math.random() * 4.5;
         if (!(mo.idleT > 0) && Math.random() < 0.42) { mo.idle = pickIdle(); mo.idleT = 2.4 + Math.random() * 3; mo.tx = mo.x; mo.ty = mo.y; }
-        else { mo.idle = 'none'; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
+        else { mo.idle = 'none'; if (mo.bonded) { var wba = Math.random() * Math.PI * 2, wbd = 45 + Math.random() * 150; mo.tx = campfire.x + Math.cos(wba) * wbd; mo.ty = campfire.y + Math.sin(wba) * wbd; } else { mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; } }
       }
       if (mo.eat > 0) mo.eat -= dt;
       if (mo.follow > 0 && !(mo.eat > 0)) { mo.follow -= dt; var wfx = mo.x - player.x, wfy = mo.y - player.y, wfd = Math.hypot(wfx, wfy) || 1; mo.tx = player.x + (wfx / wfd) * FOLLOW_DIST; mo.ty = player.y + (wfy / wfd) * FOLLOW_DIST; mo.retarget = 1; }
@@ -1220,7 +1226,7 @@
 
     // panthère : rôde vers des points variés autour du joueur (prowl lent), sur terre.
     var pdx0 = panther.x - player.x, pdy0 = panther.y - player.y;
-    if (pdx0 * pdx0 + pdy0 * pdy0 > 1900 * 1900) { // trop loin -> réapparaît hors écran autour du joueur
+    if (!panther.bonded && pdx0 * pdx0 + pdy0 * pdy0 > 1900 * 1900) { // trop loin -> réapparaît (sauf apprivoisée : elle reste au camp)
       var pang = Math.random() * Math.PI * 2;
       for (var pti = 0; pti < 8; pti++) {
         var pdd = 850 + Math.random() * 420;
@@ -1237,8 +1243,9 @@
       if (!(panther.idleT > 0) && Math.random() < 0.42) { panther.idle = pickIdle(); panther.idleT = 2.4 + Math.random() * 3; panther.tx = panther.x; panther.ty = panther.y; }
       else {
         panther.idle = 'none';
-        var pta = Math.random() * Math.PI * 2, ptd = 260 + Math.random() * 540;
-        var pntx = panther.x + Math.cos(pta) * ptd, pnty = panther.y + Math.sin(pta) * ptd;
+        var pca = Math.random() * Math.PI * 2, pcd = panther.bonded ? (45 + Math.random() * 160) : (260 + Math.random() * 540);
+        var pcox = panther.bonded ? campfire.x : panther.x, pcoy = panther.bonded ? campfire.y : panther.y;
+        var pntx = pcox + Math.cos(pca) * pcd, pnty = pcoy + Math.sin(pca) * pcd;
         if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
       }
     }
@@ -1256,7 +1263,7 @@
 
     // tortue : se balade TRÈS lentement vers des points variés, sur terre.
     var tdx0 = turtle.x - player.x, tdy0 = turtle.y - player.y;
-    if (tdx0 * tdx0 + tdy0 * tdy0 > 1900 * 1900) {
+    if (!turtle.bonded && tdx0 * tdx0 + tdy0 * tdy0 > 1900 * 1900) {
       var tang = Math.random() * Math.PI * 2;
       for (var tti = 0; tti < 8; tti++) {
         var tdd = 820 + Math.random() * 420;
@@ -1273,8 +1280,9 @@
       if (!(turtle.idleT > 0) && Math.random() < 0.42) { turtle.idle = pickIdle(); turtle.idleT = 2.6 + Math.random() * 3.5; turtle.tx = turtle.x; turtle.ty = turtle.y; }
       else {
         turtle.idle = 'none';
-        var uta = Math.random() * Math.PI * 2, utd = 180 + Math.random() * 360;
-        var utx = turtle.x + Math.cos(uta) * utd, uty = turtle.y + Math.sin(uta) * utd;
+        var uca = Math.random() * Math.PI * 2, ucd = turtle.bonded ? (45 + Math.random() * 150) : (180 + Math.random() * 360);
+        var ucox = turtle.bonded ? campfire.x : turtle.x, ucoy = turtle.bonded ? campfire.y : turtle.y;
+        var utx = ucox + Math.cos(uca) * ucd, uty = ucoy + Math.sin(uca) * ucd;
         if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
       }
     }
@@ -1292,7 +1300,7 @@
 
     // tortue verte : même balade très lente, sur terre.
     var gdx0 = gturtle.x - player.x, gdy0 = gturtle.y - player.y;
-    if (gdx0 * gdx0 + gdy0 * gdy0 > 1900 * 1900) {
+    if (!gturtle.bonded && gdx0 * gdx0 + gdy0 * gdy0 > 1900 * 1900) {
       var gang = Math.random() * Math.PI * 2;
       for (var gti = 0; gti < 8; gti++) {
         var gdd = 820 + Math.random() * 420;
@@ -1309,8 +1317,9 @@
       if (!(gturtle.idleT > 0) && Math.random() < 0.42) { gturtle.idle = pickIdle(); gturtle.idleT = 2.6 + Math.random() * 3.5; gturtle.tx = gturtle.x; gturtle.ty = gturtle.y; }
       else {
         gturtle.idle = 'none';
-        var gtta = Math.random() * Math.PI * 2, gttd = 180 + Math.random() * 360;
-        var gtx = gturtle.x + Math.cos(gtta) * gttd, gty = gturtle.y + Math.sin(gtta) * gttd;
+        var gca = Math.random() * Math.PI * 2, gcd = gturtle.bonded ? (45 + Math.random() * 150) : (180 + Math.random() * 360);
+        var gcox = gturtle.bonded ? campfire.x : gturtle.x, gcoy = gturtle.bonded ? campfire.y : gturtle.y;
+        var gtx = gcox + Math.cos(gca) * gcd, gty = gcoy + Math.sin(gca) * gcd;
         if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
       }
     }
@@ -1386,6 +1395,21 @@
 
     // feu de camp : consomme du combustible ; sans bûches, il finit par s'éteindre.
     if (campfire.fuel > 0) campfire.fuel = Math.max(0, campfire.fuel - dt * 0.7);
+
+    // météo : bascule clair<->pluie, intensité lissée, avance des gouttes.
+    weather.t -= dt;
+    if (weather.t <= 0) {
+      if (weather.state === 'clear') { weather.state = 'rain'; weather.t = 16 + Math.random() * 26; }
+      else { weather.state = 'clear'; weather.t = 45 + Math.random() * 75; }
+    }
+    weather.rain += ((weather.state === 'rain' ? 1 : 0) - weather.rain) * Math.min(1, dt * 0.5);
+    if (weather.rain > 0.01) {
+      for (var rdi = 0; rdi < rainDrops.length; rdi++) {
+        var drp = rainDrops[rdi]; drp.y += drp.sp * dt * 1.5; drp.x += 0.05 * dt;
+        if (drp.y > 1.05) { drp.y = -0.05; drp.x = Math.random(); }
+        if (drp.x > 1.05) drp.x -= 1.1;
+      }
+    }
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
@@ -2424,6 +2448,18 @@
     }
     drawCampLight(cam, dark, zoom);
     renderFog(cam, zoom);
+
+    // pluie (ambiance) : voile bleuté + stries qui tombent
+    if (weather.rain > 0.02) {
+      ctx.fillStyle = 'rgba(45,55,80,' + (weather.rain * 0.2).toFixed(3) + ')'; ctx.fillRect(0, 0, W, H);
+      var rn = Math.floor(rainDrops.length * weather.rain);
+      ctx.save(); ctx.strokeStyle = 'rgba(185,208,238,' + (0.42 * weather.rain).toFixed(2) + ')'; ctx.lineWidth = 1.2; ctx.lineCap = 'round';
+      for (var rri = 0; rri < rn; rri++) {
+        var rd = rainDrops[rri], rpx = rd.x * W, rpy = rd.y * H, rln = rd.len * (0.8 + rd.sp);
+        ctx.beginPath(); ctx.moveTo(rpx, rpy); ctx.lineTo(rpx - rln * 0.35, rpy - rln); ctx.stroke();
+      }
+      ctx.restore();
+    }
 
     // léger vignettage (ambiance, sous le HUD)
     var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
