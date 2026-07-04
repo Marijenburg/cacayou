@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.27.0';
+  var VERSION = '0.28.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -156,7 +156,7 @@
     rob_armL: 'assets/rob_armL.png', rob_armR: 'assets/rob_armR.png',
     rob_legL: 'assets/rob_legL.png', rob_legR: 'assets/rob_legR.png',
     ball: 'assets/ball.png',            // ballon (dessin de Charlie)
-    heart: 'assets/heart.png',          // petit coeur (dessin de Charlie à venir ; fallback vectoriel)
+    heart1: 'assets/heart1.png', heart2: 'assets/heart2.png', // 2 coeurs de Charlie (alternés)
 
     // Touffes d'herbe dessinées à la main par Charlie (détourées), semées en RNG au sol.
     grass1: 'assets/grass1.png', grass2: 'assets/grass2.png', grass3: 'assets/grass3.png', grass4: 'assets/grass4.png',
@@ -309,7 +309,7 @@
     groundApples.push({
       x: wx + (Math.random() - 0.5) * 16, y: wy + (Math.random() - 0.5) * 6,
       vx: (Math.random() - 0.5) * 26, vy: (Math.random() - 0.5) * 10,
-      z: (z0 || 14) + Math.random() * 8, vz: 4 + Math.random() * 16,
+      z: (z0 || 14) + Math.random() * 8, vz: 45 + Math.random() * 30,
       sz: 0.9 + Math.random() * 0.25, grounded: false, t: 0
     });
   }
@@ -319,6 +319,15 @@
       parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 30 - Math.random() * 70,
         life: 0.3 + Math.random() * 0.35, t: 0, c: APPLE_COLS[(Math.random() * APPLE_COLS.length) | 0],
         w: 2 + Math.random() * 2.5, h: 2 + Math.random() * 2.5, rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 12 });
+    }
+  }
+  var LEAF_COLS = ['#6fae5b', '#7fbf68', '#5c9a4a', '#8ec779'];
+  function spawnLeafBits(wx, wy, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 18 + Math.random() * 55;
+      parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 8 - Math.random() * 28,
+        life: 0.45 + Math.random() * 0.45, t: 0, c: LEAF_COLS[(Math.random() * LEAF_COLS.length) | 0],
+        w: 2 + Math.random() * 2, h: 1.5 + Math.random() * 2, rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 9 });
     }
   }
   function eatApple() {
@@ -515,8 +524,11 @@
 
   // Ballon près du camp : le perso le percute -> petit saut + part à l'opposé, roule court.
   var ball = { x: HOME.x + 40, y: HOME.y + 120, vx: 0, vy: 0, z: 0, vz: 0, r: 15, rot: 0, vrot: 0, kickCd: 0 };
-  var hearts = []; // petits coeurs qui montent au-dessus des créatures nourries
-  function spawnHeart(wx, wy) { hearts.push({ x: wx, y: wy, t: 0, life: 1.4, drift: (Math.random() - 0.5) * 12 }); }
+  var hearts = [], heartAlt = 0; // petits coeurs (2 variantes alternées) au-dessus des créatures nourries
+  function spawnHeart(wx, wy, delay) {
+    heartAlt++;
+    hearts.push({ x: wx + (Math.random() - 0.5) * 8, y: wy, t: 0, life: 1.3, delay: delay || 0, drift: (Math.random() - 0.5) * 12, v: (heartAlt % 2) + 1 });
+  }
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
   var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
@@ -719,8 +731,10 @@
         appleCount--;
         a.target.eat = 1.5; // la créature s'arrête et mange pendant ce temps
         spawnAppleBits(a.target.x, a.target.y - 16, 12);
-        spawnHeart(a.target.x, a.target.y - 34);
-        floater('miam', a.target.x, a.target.y - 50);
+        spawnHeart(a.target.x, a.target.y - 34, 0);      // cœurs animés, alternés + étalés dans le temps
+        spawnHeart(a.target.x, a.target.y - 30, 0.4);
+        spawnHeart(a.target.x, a.target.y - 36, 0.8);
+        floater('miam', a.target.x, a.target.y - 52);
       }
     }
   }
@@ -1029,6 +1043,7 @@
         if (tr.apples > 0) {
           tr.apples--; pickedApples[tr.id] = (pickedApples[tr.id] || 0) + 1;
           spawnApple(tr.x, tr.y + 6, TARGET_H.tree * tr.s * 0.5); // tombe DEVANT l'arbre, depuis la canopée
+          spawnLeafBits(tr.x, tr.y - TARGET_H.tree * tr.s * 0.5, 5); // feuilles chamboulées (léger)
         }
         // pitch + volume variés à chaque coup ; le coup FATAL = le plus fort + le plus aigu.
         var pitch = fell ? 1.28 : (0.88 + Math.random() * 0.26);
@@ -1230,7 +1245,7 @@
     if (bdd < ball.r + PR && ball.kickCd <= 0 && !inTent) {
       var kx, ky;
       if (bdd > 0.1) { kx = bdx / bdd; ky = bdy / bdd; } else { kx = player.facing.x; ky = player.facing.y; }
-      ball.vx = kx * 135; ball.vy = ky * 135; ball.vz = 72;
+      ball.vx = kx * 340; ball.vy = ky * 340; ball.vz = 82;
       ball.vrot = (Math.random() < 0.5 ? -1 : 1) * 9; ball.kickCd = 0.2;
     }
     if (ball.z > 0 || ball.vz !== 0) {
@@ -1238,11 +1253,15 @@
       if (ball.z <= 0) { ball.z = 0; ball.vz = (ball.vz < -30) ? -ball.vz * 0.42 : 0; }
     }
     ball.x += ball.vx * dt; ball.y += ball.vy * dt;
-    var bfr = Math.pow(0.03, dt); ball.vx *= bfr; ball.vy *= bfr;
+    var bfr = Math.pow(0.05, dt); ball.vx *= bfr; ball.vy *= bfr;
     if (Math.hypot(ball.vx, ball.vy) < 4) { ball.vx = 0; ball.vy = 0; }
     ball.rot += ball.vrot * dt; ball.vrot *= Math.pow(0.06, dt);
-    // coeurs (créatures nourries) : montent + fade
-    for (var hi = hearts.length - 1; hi >= 0; hi--) { var ht = hearts[hi]; ht.t += dt; ht.y -= 26 * dt; ht.x += ht.drift * dt; if (ht.t >= ht.life) hearts.splice(hi, 1); }
+    // coeurs (créatures nourries) : delay puis montent + fade
+    for (var hi = hearts.length - 1; hi >= 0; hi--) {
+      var ht = hearts[hi];
+      if (ht.delay > 0) { ht.delay -= dt; continue; }
+      ht.t += dt; ht.y -= 26 * dt; ht.x += ht.drift * dt; if (ht.t >= ht.life) hearts.splice(hi, 1);
+    }
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
@@ -1851,11 +1870,12 @@
   // Petits coeurs au-dessus des créatures nourries (dessin de Charlie à venir -> fallback vectoriel).
   function drawHearts(cam) {
     for (var i = 0; i < hearts.length; i++) {
-      var h = hearts[i], k = 1 - h.t / h.life, sc = 0.7 + (1 - k) * 0.5;
+      var h = hearts[i]; if (h.delay > 0) continue;
+      var k = 1 - h.t / h.life, sc = 0.7 + (1 - k) * 0.5;
       ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.6); ctx.translate(h.x - cam.x, h.y - cam.y);
-      var im = IMG.heart;
+      var im = IMG['heart' + (h.v || 1)];
       if (im && im.complete && im.naturalWidth) {
-        var hh = 18 * sc, ww = hh * (im.naturalWidth / im.naturalHeight);
+        var hh = 17 * sc, ww = hh * (im.naturalWidth / im.naturalHeight);
         ctx.drawImage(im, -ww / 2, -hh / 2, ww, hh);
       } else {
         ctx.scale(sc, sc); ctx.fillStyle = '#e8556b';
