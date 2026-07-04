@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.26.0';
+  var VERSION = '0.27.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -155,6 +155,8 @@
     rob_head: 'assets/rob_head.png', rob_body: 'assets/rob_body.png',
     rob_armL: 'assets/rob_armL.png', rob_armR: 'assets/rob_armR.png',
     rob_legL: 'assets/rob_legL.png', rob_legR: 'assets/rob_legR.png',
+    ball: 'assets/ball.png',            // ballon (dessin de Charlie)
+    heart: 'assets/heart.png',          // petit coeur (dessin de Charlie à venir ; fallback vectoriel)
 
     // Touffes d'herbe dessinées à la main par Charlie (détourées), semées en RNG au sol.
     grass1: 'assets/grass1.png', grass2: 'assets/grass2.png', grass3: 'assets/grass3.png', grass4: 'assets/grass4.png',
@@ -511,6 +513,11 @@
     state: 'walk', stateT: 3 + Math.random() * 4, fold: 0, blink: 0
   };
 
+  // Ballon près du camp : le perso le percute -> petit saut + part à l'opposé, roule court.
+  var ball = { x: HOME.x + 40, y: HOME.y + 120, vx: 0, vy: 0, z: 0, vz: 0, r: 15, rot: 0, vrot: 0, kickCd: 0 };
+  var hearts = []; // petits coeurs qui montent au-dessus des créatures nourries
+  function spawnHeart(wx, wy) { hearts.push({ x: wx, y: wy, t: 0, life: 1.4, drift: (Math.random() - 0.5) * 12 }); }
+
   // ── Personnage (forme simple) ────────────────────────────────────────────
   var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
   var hasBoat = true;   // bateau dans l'inventaire dès le départ
@@ -710,8 +717,10 @@
     } else if (a.type === 'feed') {
       if (appleCount > 0 && a.target) {
         appleCount--;
-        spawnAppleBits(a.target.x, a.target.y - 16, 11);
-        floater('miam', a.target.x, a.target.y - 40);
+        a.target.eat = 1.5; // la créature s'arrête et mange pendant ce temps
+        spawnAppleBits(a.target.x, a.target.y - 16, 12);
+        spawnHeart(a.target.x, a.target.y - 34);
+        floater('miam', a.target.x, a.target.y - 50);
       }
     }
   }
@@ -1056,8 +1065,9 @@
       monster.tx = monster.hx + (Math.random() - 0.5) * 260;
       monster.ty = monster.hy + (Math.random() - 0.5) * 210;
     }
+    if (monster.eat > 0) monster.eat -= dt;
     var mdx = monster.tx - monster.x, mdy = monster.ty - monster.y, mdd = Math.hypot(mdx, mdy);
-    if (mdd > 4) {
+    if (mdd > 4 && !(monster.eat > 0)) {
       monster.x += (mdx / mdd) * 26 * dt; monster.y += (mdy / mdd) * 26 * dt;
       monster.step = (monster.step || 0) + 26 * dt;         // pas spatialisés pour le 1er monstre aussi
       if (monster.step >= 46) { monster.step -= 46; walkerStep(monster); }
@@ -1079,8 +1089,9 @@
       }
       mo.retarget -= dt;
       if (mo.retarget <= 0) { mo.retarget = 2 + Math.random() * 4.5; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
+      if (mo.eat > 0) mo.eat -= dt;
       var wdx = mo.tx - mo.x, wdy = mo.ty - mo.y, wdd = Math.hypot(wdx, wdy);
-      if (wdd > 5) {
+      if (wdd > 5 && !(mo.eat > 0)) {
         mo.x += (wdx / wdd) * 34 * dt; mo.y += (wdy / wdd) * 34 * dt;
         if (Math.abs(wdx) > 2) mo.face = wdx < 0 ? -1 : 1;
         mo.phase += dt * 9;
@@ -1108,8 +1119,9 @@
       var pntx = panther.x + Math.cos(pta) * ptd, pnty = panther.y + Math.sin(pta) * ptd;
       if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
     }
+    if (panther.eat > 0) panther.eat -= dt;
     var pvx = panther.tx - panther.x, pvy = panther.ty - panther.y, pvd = Math.hypot(pvx, pvy);
-    if (pvd > 5) {
+    if (pvd > 5 && !(panther.eat > 0)) {
       var psp = 40; // prowl
       panther.x += (pvx / pvd) * psp * dt; panther.y += (pvy / pvd) * psp * dt;
       if (Math.abs(pvx) > 2) panther.face = pvx < 0 ? -1 : 1;
@@ -1137,8 +1149,9 @@
       var utx = turtle.x + Math.cos(uta) * utd, uty = turtle.y + Math.sin(uta) * utd;
       if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
     }
+    if (turtle.eat > 0) turtle.eat -= dt;
     var uvx = turtle.tx - turtle.x, uvy = turtle.ty - turtle.y, uvd = Math.hypot(uvx, uvy);
-    if (uvd > 5) {
+    if (uvd > 5 && !(turtle.eat > 0)) {
       var usp = 16; // très lent (tortue)
       turtle.x += (uvx / uvd) * usp * dt; turtle.y += (uvy / uvd) * usp * dt;
       if (Math.abs(uvx) > 2) turtle.face = uvx < 0 ? -1 : 1;
@@ -1166,8 +1179,9 @@
       var gtx = gturtle.x + Math.cos(gtta) * gttd, gty = gturtle.y + Math.sin(gtta) * gttd;
       if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
     }
+    if (gturtle.eat > 0) gturtle.eat -= dt;
     var gvx = gturtle.tx - gturtle.x, gvy = gturtle.ty - gturtle.y, gvd = Math.hypot(gvx, gvy);
-    if (gvd > 5) {
+    if (gvd > 5 && !(gturtle.eat > 0)) {
       var gsp = 15;
       gturtle.x += (gvx / gvd) * gsp * dt; gturtle.y += (gvy / gvd) * gsp * dt;
       if (Math.abs(gvx) > 2) gturtle.face = gvx < 0 ? -1 : 1;
@@ -1209,6 +1223,26 @@
         rba += 1.4;
       }
     }
+
+    // ballon : collision avec le perso -> kick à l'OPPOSÉ + petit saut ; friction forte (court).
+    if (ball.kickCd > 0) ball.kickCd -= dt;
+    var bdx = ball.x - player.x, bdy = ball.y - player.y, bdd = Math.hypot(bdx, bdy);
+    if (bdd < ball.r + PR && ball.kickCd <= 0 && !inTent) {
+      var kx, ky;
+      if (bdd > 0.1) { kx = bdx / bdd; ky = bdy / bdd; } else { kx = player.facing.x; ky = player.facing.y; }
+      ball.vx = kx * 135; ball.vy = ky * 135; ball.vz = 72;
+      ball.vrot = (Math.random() < 0.5 ? -1 : 1) * 9; ball.kickCd = 0.2;
+    }
+    if (ball.z > 0 || ball.vz !== 0) {
+      ball.z += ball.vz * dt; ball.vz -= 320 * dt;
+      if (ball.z <= 0) { ball.z = 0; ball.vz = (ball.vz < -30) ? -ball.vz * 0.42 : 0; }
+    }
+    ball.x += ball.vx * dt; ball.y += ball.vy * dt;
+    var bfr = Math.pow(0.03, dt); ball.vx *= bfr; ball.vy *= bfr;
+    if (Math.hypot(ball.vx, ball.vy) < 4) { ball.vx = 0; ball.vy = 0; }
+    ball.rot += ball.vrot * dt; ball.vrot *= Math.pow(0.06, dt);
+    // coeurs (créatures nourries) : montent + fade
+    for (var hi = hearts.length - 1; hi >= 0; hi--) { var ht = hearts[hi]; ht.t += dt; ht.y -= 26 * dt; ht.x += ht.drift * dt; if (ht.t >= ht.life) hearts.splice(hi, 1); }
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
@@ -1802,6 +1836,38 @@
     ctx.restore();
   }
 
+  // Ballon : ombre + sprite en hauteur (z) + rotation.
+  function drawBall(sx, sy) {
+    var im = IMG.ball, h = 30, w = 30;
+    if (im && im.complete && im.naturalWidth) w = h * (im.naturalWidth / im.naturalHeight);
+    var az = Math.min(1, ball.z / 34);
+    ctx.save(); ctx.globalAlpha = 0.2 * (1 - az * 0.7); ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, ball.r * (1 - az * 0.25), ball.r * 0.4, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(sx, sy - ball.z - h * 0.5); ctx.rotate(ball.rot);
+    if (im && im.complete && im.naturalWidth) ctx.drawImage(im, -w / 2, -h / 2, w, h);
+    else { ctx.fillStyle = '#d98a4a'; ctx.strokeStyle = '#8a5228'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, ball.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
+  }
+  // Petits coeurs au-dessus des créatures nourries (dessin de Charlie à venir -> fallback vectoriel).
+  function drawHearts(cam) {
+    for (var i = 0; i < hearts.length; i++) {
+      var h = hearts[i], k = 1 - h.t / h.life, sc = 0.7 + (1 - k) * 0.5;
+      ctx.save(); ctx.globalAlpha = Math.min(1, k * 1.6); ctx.translate(h.x - cam.x, h.y - cam.y);
+      var im = IMG.heart;
+      if (im && im.complete && im.naturalWidth) {
+        var hh = 18 * sc, ww = hh * (im.naturalWidth / im.naturalHeight);
+        ctx.drawImage(im, -ww / 2, -hh / 2, ww, hh);
+      } else {
+        ctx.scale(sc, sc); ctx.fillStyle = '#e8556b';
+        ctx.beginPath(); ctx.moveTo(0, 4);
+        ctx.bezierCurveTo(-6, -2, -6, -8, 0, -3);
+        ctx.bezierCurveTo(6, -8, 6, -2, 0, 4);
+        ctx.closePath(); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
+
   // 1er monstre d'Elaijah : anim d'idle (respiration + dandinement + balancement).
   function drawMonster(sx, sy) {
     var im = IMG.monster;
@@ -2058,6 +2124,7 @@
     items.push({ y: turtle.y, sx: turtle.x - cam.x, sy: turtle.y - cam.y, turtle: true });
     items.push({ y: gturtle.y, sx: gturtle.x - cam.x, sy: gturtle.y - cam.y, gturtle: true });
     items.push({ y: robot.y, sx: robot.x - cam.x, sy: robot.y - cam.y, robot: true });
+    items.push({ y: ball.y, sx: ball.x - cam.x, sy: ball.y - cam.y, ball: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
@@ -2073,6 +2140,7 @@
       else if (it.turtle) drawTurtle(turtle, it.sx, it.sy);
       else if (it.gturtle) drawGreenTurtle(gturtle, it.sx, it.sy);
       else if (it.robot) drawRobot(robot, it.sx, it.sy);
+      else if (it.ball) drawBall(it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
     }
@@ -2096,6 +2164,7 @@
     drawDestMarker(cam, now);
     drawZs(cam);
     drawFloaters(cam);
+    drawHearts(cam);
 
     ctx.restore(); // enlève le zoom (+ shake)
 
