@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.35.0';
+  var VERSION = '0.36.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -2222,7 +2222,7 @@
     var size = Math.round(Math.min(108, Math.min(W, H) * 0.26)); // plus petite
     var pad = 12;
     var mx = pad, my = H - size - pad - 8;
-    var RC = 34;                       // rayon affiché, en cellules (plus dézoomé)
+    var RC = 46;                       // rayon affiché, en cellules (encore plus dézoomé)
     var cell = size / (RC * 2 + 1);
     var cxm = mx + size / 2, cym = my + size / 2, rad = size / 2;
     ctx.save();
@@ -2248,11 +2248,19 @@
       var ts = Math.max(1.6, cell);
       ctx.fillRect(mx + (tc + RC) * cell, my + (tr + RC) * cell, ts, ts);
     }
-    // repère maison si dans la fenêtre
-    var hc = Math.floor(HOME.x / CELL) - pc, hr = Math.floor(HOME.y / CELL) - pr;
-    if (Math.abs(hc) <= RC && Math.abs(hr) <= RC) {
-      ctx.fillStyle = '#e6b34d';
-      ctx.beginPath(); ctx.arc(mx + (hc + RC + 0.5) * cell, my + (hr + RC + 0.5) * cell, 2.6, 0, Math.PI * 2); ctx.fill();
+    // feu de camp : point dans le disque s'il est visible, sinon sur la BORDURE
+    // dans sa direction (boussole pour toujours retrouver le camp).
+    var fdx = campfire.x - player.x, fdy = campfire.y - player.y;
+    var fmx = cxm + (fdx / CELL) * cell, fmy = cym + (fdy / CELL) * cell;
+    var fdist = Math.hypot(fmx - cxm, fmy - cym);
+    ctx.fillStyle = '#e6b34d';
+    if (fdist <= rad - 3) {
+      ctx.beginPath(); ctx.arc(fmx, fmy, 2.8, 0, Math.PI * 2); ctx.fill();
+    } else {
+      var fang = Math.atan2(fdy, fdx);
+      var bx = cxm + Math.cos(fang) * (rad - 4), by = cym + Math.sin(fang) * (rad - 4);
+      ctx.beginPath(); ctx.arc(bx, by, 3.2, 0, Math.PI * 2); ctx.fill();
+      ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
     // perso au centre
     ctx.fillStyle = '#ef8a68';
