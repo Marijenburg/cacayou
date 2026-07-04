@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.32.0';
+  var VERSION = '0.33.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -793,6 +793,7 @@
         appleCount--;
         a.target.eat = 1.5;      // la créature s'arrête et mange pendant ce temps
         a.target.follow = 10;    // puis elle nous suit un moment (rafraîchi à chaque pomme)
+        a.target.idle = 'none'; a.target.idleT = 0; // réveil si elle dormait/idle
         spawnAppleBits(a.target.x, a.target.y - 16, 12);
         spawnHeart(a.target.x, a.target.y - 54, 0);      // cœurs animés, alternés + étalés (bien AU-DESSUS de la tête)
         spawnHeart(a.target.x, a.target.y - 50, 0.4);
@@ -1167,7 +1168,12 @@
         mo.retarget = 0;
       }
       mo.retarget -= dt;
-      if (mo.retarget <= 0) { mo.retarget = 2 + Math.random() * 4.5; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
+      if (mo.idleT > 0) { mo.idleT -= dt; if (mo.idleT <= 0) mo.idle = 'none'; else if (mo.idle === 'sleep') { mo.zCd = (mo.zCd || 0) - dt; if (mo.zCd <= 0) { mo.zCd = 0.85; floater('z', mo.x + (Math.random() - 0.5) * 8, mo.y - 30); } } }
+      if (mo.retarget <= 0 && !(mo.follow > 0)) {
+        mo.retarget = 2 + Math.random() * 4.5;
+        if (!(mo.idleT > 0) && Math.random() < 0.42) { mo.idle = pickIdle(); mo.idleT = 2.4 + Math.random() * 3; mo.tx = mo.x; mo.ty = mo.y; }
+        else { mo.idle = 'none'; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
+      }
       if (mo.eat > 0) mo.eat -= dt;
       if (mo.follow > 0 && !(mo.eat > 0)) { mo.follow -= dt; var wfx = mo.x - player.x, wfy = mo.y - player.y, wfd = Math.hypot(wfx, wfy) || 1; mo.tx = player.x + (wfx / wfd) * FOLLOW_DIST; mo.ty = player.y + (wfy / wfd) * FOLLOW_DIST; mo.retarget = 1; }
       var wdx = mo.tx - mo.x, wdy = mo.ty - mo.y, wdd = Math.hypot(wdx, wdy);
@@ -1193,11 +1199,16 @@
       panther.retarget = 0;
     }
     panther.retarget -= dt;
-    if (panther.retarget <= 0) {
+    if (panther.idleT > 0) { panther.idleT -= dt; if (panther.idleT <= 0) panther.idle = 'none'; else if (panther.idle === 'sleep') { panther.zCd = (panther.zCd || 0) - dt; if (panther.zCd <= 0) { panther.zCd = 0.85; floater('z', panther.x + (Math.random() - 0.5) * 8, panther.y - 34); } } }
+    if (panther.retarget <= 0 && !(panther.follow > 0)) {
       panther.retarget = 3 + Math.random() * 5;
-      var pta = Math.random() * Math.PI * 2, ptd = 260 + Math.random() * 540;
-      var pntx = panther.x + Math.cos(pta) * ptd, pnty = panther.y + Math.sin(pta) * ptd;
-      if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
+      if (!(panther.idleT > 0) && Math.random() < 0.42) { panther.idle = pickIdle(); panther.idleT = 2.4 + Math.random() * 3; panther.tx = panther.x; panther.ty = panther.y; }
+      else {
+        panther.idle = 'none';
+        var pta = Math.random() * Math.PI * 2, ptd = 260 + Math.random() * 540;
+        var pntx = panther.x + Math.cos(pta) * ptd, pnty = panther.y + Math.sin(pta) * ptd;
+        if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
+      }
     }
     if (panther.eat > 0) panther.eat -= dt;
     if (panther.follow > 0 && !(panther.eat > 0)) { panther.follow -= dt; var pfx = panther.x - player.x, pfy = panther.y - player.y, pfd = Math.hypot(pfx, pfy) || 1; panther.tx = player.x + (pfx / pfd) * FOLLOW_DIST; panther.ty = player.y + (pfy / pfd) * FOLLOW_DIST; panther.retarget = 1; }
@@ -1224,11 +1235,16 @@
       turtle.retarget = 0;
     }
     turtle.retarget -= dt;
-    if (turtle.retarget <= 0) {
+    if (turtle.idleT > 0) { turtle.idleT -= dt; if (turtle.idleT <= 0) turtle.idle = 'none'; else if (turtle.idle === 'sleep') { turtle.zCd = (turtle.zCd || 0) - dt; if (turtle.zCd <= 0) { turtle.zCd = 0.85; floater('z', turtle.x + (Math.random() - 0.5) * 8, turtle.y - 26); } } }
+    if (turtle.retarget <= 0 && !(turtle.follow > 0)) {
       turtle.retarget = 4 + Math.random() * 6;
-      var uta = Math.random() * Math.PI * 2, utd = 180 + Math.random() * 360;
-      var utx = turtle.x + Math.cos(uta) * utd, uty = turtle.y + Math.sin(uta) * utd;
-      if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
+      if (!(turtle.idleT > 0) && Math.random() < 0.42) { turtle.idle = pickIdle(); turtle.idleT = 2.6 + Math.random() * 3.5; turtle.tx = turtle.x; turtle.ty = turtle.y; }
+      else {
+        turtle.idle = 'none';
+        var uta = Math.random() * Math.PI * 2, utd = 180 + Math.random() * 360;
+        var utx = turtle.x + Math.cos(uta) * utd, uty = turtle.y + Math.sin(uta) * utd;
+        if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
+      }
     }
     if (turtle.eat > 0) turtle.eat -= dt;
     if (turtle.follow > 0 && !(turtle.eat > 0)) { turtle.follow -= dt; var tfx = turtle.x - player.x, tfy = turtle.y - player.y, tfd = Math.hypot(tfx, tfy) || 1; turtle.tx = player.x + (tfx / tfd) * FOLLOW_DIST; turtle.ty = player.y + (tfy / tfd) * FOLLOW_DIST; turtle.retarget = 1; }
@@ -1255,11 +1271,16 @@
       gturtle.retarget = 0;
     }
     gturtle.retarget -= dt;
-    if (gturtle.retarget <= 0) {
+    if (gturtle.idleT > 0) { gturtle.idleT -= dt; if (gturtle.idleT <= 0) gturtle.idle = 'none'; else if (gturtle.idle === 'sleep') { gturtle.zCd = (gturtle.zCd || 0) - dt; if (gturtle.zCd <= 0) { gturtle.zCd = 0.85; floater('z', gturtle.x + (Math.random() - 0.5) * 8, gturtle.y - 28); } } }
+    if (gturtle.retarget <= 0 && !(gturtle.follow > 0)) {
       gturtle.retarget = 4 + Math.random() * 6;
-      var gtta = Math.random() * Math.PI * 2, gttd = 180 + Math.random() * 360;
-      var gtx = gturtle.x + Math.cos(gtta) * gttd, gty = gturtle.y + Math.sin(gtta) * gttd;
-      if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
+      if (!(gturtle.idleT > 0) && Math.random() < 0.42) { gturtle.idle = pickIdle(); gturtle.idleT = 2.6 + Math.random() * 3.5; gturtle.tx = gturtle.x; gturtle.ty = gturtle.y; }
+      else {
+        gturtle.idle = 'none';
+        var gtta = Math.random() * Math.PI * 2, gttd = 180 + Math.random() * 360;
+        var gtx = gturtle.x + Math.cos(gtta) * gttd, gty = gturtle.y + Math.sin(gtta) * gttd;
+        if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
+      }
     }
     if (gturtle.eat > 0) gturtle.eat -= dt;
     if (gturtle.follow > 0 && !(gturtle.eat > 0)) { gturtle.follow -= dt; var gfx = gturtle.x - player.x, gfy = gturtle.y - player.y, gfd = Math.hypot(gfx, gfy) || 1; gturtle.tx = player.x + (gfx / gfd) * FOLLOW_DIST; gturtle.ty = player.y + (gfy / gfd) * FOLLOW_DIST; gturtle.retarget = 1; }
@@ -1794,6 +1815,7 @@
     ctx.save();
     ctx.translate(sx, sy);
     if (mo.face < 0) ctx.scale(-1, 1);   // orientation de marche
+    applyIdlePose(mo, s);
     limb('mm_legR', 6, -13, 21, Math.sin(p + Math.PI) * legSw);        // jambe droite (arrière)
     limb('mm_legL', -6, -13, 21, Math.sin(p) * legSw);                 // jambe gauche (avant)
     limb('mm_armL', -10, -28, 17, Math.sin(p + Math.PI) * armSw - 0.3); // bras gauche (derrière)
@@ -1801,6 +1823,15 @@
     limb('mm_armR', 10, -28, 17, Math.sin(p) * armSw + 0.3);           // bras droit (devant)
     part('mm_head', 0, -33 + bob * 1.1, 27);                           // tête (au-dessus)
     ctx.restore();
+  }
+
+  // Idle variés : posture appliquée au rig quand la créature est à l'arrêt.
+  function pickIdle() { var r = Math.random(); return r < 0.4 ? 'sit' : (r < 0.72 ? 'look' : 'sleep'); }
+  function applyIdlePose(mo, s) {
+    if (!mo.idle || mo.idle === 'none') return;
+    if (mo.idle === 'sit') { ctx.translate(0, 5 * s); ctx.scale(1, 0.82); }           // s'assoit (plus bas + tassé)
+    else if (mo.idle === 'sleep') { ctx.translate(0, 7 * s); ctx.scale(1.08, 0.6 + Math.sin(T * 2.2) * 0.02); } // dodo (aplati + respire)
+    else if (mo.idle === 'look') { ctx.rotate(Math.sin(T * 1.5) * 0.1); }              // regarde autour (léger balancement)
   }
 
   // Panthère quadrupède (tête + corps + 4 pattes). Vue côté-ish comme les monstres.
@@ -1825,6 +1856,7 @@
     ctx.save();
     ctx.translate(sx, sy);
     if (mo.face > 0) ctx.scale(-1, 1);
+    applyIdlePose(mo, s);
     leg('pan_legBackFar', 15, -19, 30, Math.sin(p) * sw);              // patte fond arrière
     leg('pan_legFrontFar', -15, -19, 28, Math.sin(p + Math.PI) * sw);  // patte fond avant
     ctr('pan_body', 0, -24 + bob, 34);                                 // corps
@@ -1855,6 +1887,7 @@
     ctx.save();
     ctx.translate(sx, sy);
     if (mo.face > 0) ctx.scale(-1, 1);
+    applyIdlePose(mo, s);
     leg('t_leg2', -13, -17, 15, -0.5, Math.sin(p + Math.PI) * sw);  // patte fond avant (haut-gauche)
     leg('t_leg4', 13, -17, 15, 0.5, Math.sin(p) * sw);             // patte fond arrière (haut-droite)
     ctr('t_body', 0, -16 + bob, 30);                               // carapace (centre) + queue
@@ -1884,6 +1917,7 @@
     ctx.save();
     ctx.translate(sx, sy);
     if (mo.face > 0) ctx.scale(-1, 1);
+    applyIdlePose(mo, s);
     leg('gt_leg2', -16, -24, 16, -0.6, Math.sin(p + Math.PI) * sw);  // haut-gauche (fond)
     leg('gt_leg4', 16, -24, 16, 0.6, Math.sin(p) * sw);             // haut-droite (fond)
     ctr('gt_shell', 0, -20 + bob, 42);                              // carapace (grosse, centre)
