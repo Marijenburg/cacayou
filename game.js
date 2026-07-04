@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.34.0';
+  var VERSION = '0.35.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -2219,22 +2219,34 @@
   // Mini-carte = RADAR centré sur le perso (monde infini : pas de carte globale).
   // Montre les cases explorées autour de lui, la maison, et le perso au centre.
   function renderMiniMap() {
-    var size = Math.round(Math.min(132, Math.min(W, H) * 0.32));
+    var size = Math.round(Math.min(108, Math.min(W, H) * 0.26)); // plus petite
     var pad = 12;
     var mx = pad, my = H - size - pad - 8;
-    var RC = 26;                       // rayon affiché, en cellules
+    var RC = 34;                       // rayon affiché, en cellules (plus dézoomé)
     var cell = size / (RC * 2 + 1);
+    var cxm = mx + size / 2, cym = my + size / 2, rad = size / 2;
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(mx - 3, my - 3, size + 6, size + 6);
-    ctx.strokeStyle = 'rgba(59,90,46,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(mx - 3, my - 3, size + 6, size + 6);
-    // clip au cadre pour ne rien déborder
-    ctx.beginPath(); ctx.rect(mx, my, size, size); ctx.clip();
-    ctx.fillStyle = '#23301f'; ctx.fillRect(mx, my, size, size); // inexploré
+    // cadre CIRCULAIRE
+    ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.beginPath(); ctx.arc(cxm, cym, rad + 3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(59,90,46,0.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.arc(cxm, cym, rad + 3, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cxm, cym, rad, 0, Math.PI * 2); ctx.clip(); // clip au disque
+    ctx.fillStyle = '#23301f'; ctx.fillRect(mx, my, size, size); // inexploré (clippé au cercle)
     var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL);
-    ctx.fillStyle = '#8fc47a';                                   // exploré (vert pastel)
+    // cases explorées : herbe verte, EAU en bleu (échantillonnée par cellule)
     for (var r = -RC; r <= RC; r++) for (var c = -RC; c <= RC; c++) {
       if (!isExplored(pc + c, pr + r)) continue;
+      var wwx = (pc + c) * CELL + CELL / 2, wwy = (pr + r) * CELL + CELL / 2;
+      ctx.fillStyle = isWater(wwx, wwy) ? '#4f9fd0' : '#8fc47a';
       ctx.fillRect(mx + (c + RC) * cell, my + (r + RC) * cell, cell + 0.6, cell + 0.6);
+    }
+    // arbres = pixels vert foncé (fenêtre active)
+    ctx.fillStyle = '#2f6a35';
+    for (var ti = 0; ti < decos.length; ti++) {
+      var dd = decos[ti]; if (dd.type !== 'tree' || dd.dead) continue;
+      var tc = Math.floor(dd.x / CELL) - pc, tr = Math.floor(dd.y / CELL) - pr;
+      if (Math.abs(tc) > RC || Math.abs(tr) > RC) continue;
+      var ts = Math.max(1.6, cell);
+      ctx.fillRect(mx + (tc + RC) * cell, my + (tr + RC) * cell, ts, ts);
     }
     // repère maison si dans la fenêtre
     var hc = Math.floor(HOME.x / CELL) - pc, hr = Math.floor(HOME.y / CELL) - pr;
