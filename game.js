@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.30.0';
+  var VERSION = '0.31.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -636,17 +636,17 @@
     // 0) réveil si on dort ; un clic sur la tente = juste se réveiller.
     if (inTent) { exitTent(); if (tentAt(mx, my)) { marker = null; return; } }
     // 0c) clic sur une créature quand on a des pommes = lui en donner une.
-    if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { flashSelect(cre.x, cre.y, 44); startAction('feed', cre, 42); return; } }
+    if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { flashSelect({ x: cre.x, y: cre.y - 18, rx: 26, ry: 26 }); startAction('feed', cre, 42); return; } }
     // 0b) clic sur la tente (éveillé) = aller dormir.
-    if (!inTent && tentAt(mx, my)) { flashSelect(tent.x, tent.y, 46); startAction('sleep', tent, tent.cr + PR + 12); return; }
+    if (!inTent && tentAt(mx, my)) { flashSelect({ x: tent.x, y: tent.y - 28, rx: 38, ry: 34 }); startAction('sleep', tent, tent.cr + PR + 12); return; }
     // 1) clic sur la hache au sol ?
     if (!hasAxe && !axe.picked && Math.hypot(mx - axe.x, my - axe.y) < 30) {
-      flashSelect(axe.x, axe.y, 30); startAction('pickup', null, PR + 26); return;
+      flashSelect({ x: axe.x, y: axe.y - 8, rx: 18, ry: 15 }); startAction('pickup', null, PR + 26); return;
     }
     // 2) clic sur un arbre ?
     var tree = treeAt(mx, my);
     if (tree) {
-      var tim = IMG[tree.key]; flashSelect(tree.x, tree.y, TARGET_H.tree * tree.s * (tim && tim.naturalHeight ? tim.naturalWidth / tim.naturalHeight : 0.5));
+      var tim = IMG[tree.key], tth = TARGET_H.tree * tree.s; flashSelect({ key: tree.key, x: tree.x, y: tree.y, w: tth * (tim && tim.naturalHeight ? tim.naturalWidth / tim.naturalHeight : 0.6), h: tth });
       if (!hasAxe) {
         floater('You need an axe', tree.x, tree.y - 44);
         var adj0 = adjacencyPoint(tree.x, tree.y, tree.cr + PR + 8);
@@ -664,9 +664,22 @@
 
   // Arbre sous le point monde (mx,my) : dans les bornes du sprite, le plus au
   // premier plan (plus grand y) en cas de chevauchement.
-  // Flash de sélection : anneau lumineux bref sur l'élément cliqué (lisibilité).
+  // Flash de sélection : outline bref sur l'élément cliqué (lisibilité).
   var selectFx = null;
-  function flashSelect(x, y, w) { selectFx = { x: x, y: y, w: w, t0: T }; }
+  function flashSelect(opts) { opts.t0 = T; selectFx = opts; }
+  // Silhouette blanche d'un sprite (offscreen) pour tracer un contour précis.
+  var silCache = {};
+  function getSilhouette(key) {
+    if (key in silCache) return silCache[key];
+    var im = IMG[key];
+    if (!im || !im.complete || !im.naturalWidth) return null;
+    try {
+      var c = document.createElement('canvas'); c.width = im.naturalWidth; c.height = im.naturalHeight;
+      var cx2 = c.getContext('2d'); cx2.drawImage(im, 0, 0);
+      cx2.globalCompositeOperation = 'source-in'; cx2.fillStyle = '#ffffff'; cx2.fillRect(0, 0, c.width, c.height);
+      silCache[key] = c; return c;
+    } catch (e) { silCache[key] = null; return null; }
+  }
 
   // Masque alpha d'un sprite (offscreen), pour un test de clic PIXEL-PRÉCIS.
   var alphaMasks = {};
@@ -761,9 +774,9 @@
         appleCount--;
         a.target.eat = 1.5; // la créature s'arrête et mange pendant ce temps
         spawnAppleBits(a.target.x, a.target.y - 16, 12);
-        spawnHeart(a.target.x, a.target.y - 34, 0);      // cœurs animés, alternés + étalés dans le temps
-        spawnHeart(a.target.x, a.target.y - 30, 0.4);
-        spawnHeart(a.target.x, a.target.y - 36, 0.8);
+        spawnHeart(a.target.x, a.target.y - 54, 0);      // cœurs animés, alternés + étalés (bien AU-DESSUS de la tête)
+        spawnHeart(a.target.x, a.target.y - 50, 0.4);
+        spawnHeart(a.target.x, a.target.y - 58, 0.8);
         floater('miam', a.target.x, a.target.y - 52);
       }
     }
@@ -1907,12 +1920,26 @@
   // Flash de sélection : anneau lumineux bref sur l'élément cliqué.
   function drawSelectFx(cam) {
     if (!selectFx) return;
-    var e = T - selectFx.t0; if (e > 0.45) { selectFx = null; return; }
-    var k = 1 - e / 0.45, s = selectFx, sx = s.x - cam.x, sy = s.y - cam.y;
-    ctx.save(); ctx.globalAlpha = k * 0.95; ctx.strokeStyle = '#fff3c0'; ctx.lineWidth = 2.6;
-    var rr = Math.max(14, s.w * 0.42) * (1 + (1 - k) * 0.4);
-    ctx.beginPath(); ctx.ellipse(sx, sy, rr, rr * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.restore();
+    var e = T - selectFx.t0; if (e > 0.5) { selectFx = null; return; }
+    var k = 1 - e / 0.5, s = selectFx;
+    if (s.key) {
+      // contour PRÉCIS : halo blanc autour des bords du sprite (arbre)
+      var sil = getSilhouette(s.key), im = IMG[s.key];
+      if (sil && im && im.naturalWidth) {
+        var dx = s.x - cam.x - s.w / 2, dy = s.y - cam.y - s.h, r = 2.6 + (1 - k) * 1.6;
+        ctx.save(); ctx.globalAlpha = k;
+        for (var oi = 0; oi < 10; oi++) { var oa = oi / 10 * Math.PI * 2; ctx.drawImage(sil, dx + Math.cos(oa) * r, dy + Math.sin(oa) * r, s.w, s.h); }
+        ctx.restore();
+        ctx.drawImage(im, dx, dy, s.w, s.h); // le vrai sprite par-dessus -> ne reste que le halo aux bords
+      }
+    } else {
+      // halo lumineux autour de l'élément (créature / tente / hache)
+      ctx.save(); ctx.globalAlpha = k; ctx.strokeStyle = '#eafff0'; ctx.lineWidth = 3;
+      ctx.shadowColor = '#8ef0a8'; ctx.shadowBlur = 9;
+      var pr = 1 + (1 - k) * 0.14;
+      ctx.beginPath(); ctx.ellipse(s.x - cam.x, s.y - cam.y, s.rx * pr, s.ry * pr, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
   }
   // Petits coeurs au-dessus des créatures nourries (dessin de Charlie à venir -> fallback vectoriel).
   function drawHearts(cam) {
