@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.29.0';
+  var VERSION = '0.30.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -1551,6 +1551,13 @@
     part('heroBody', 1, -8 - bob, 24);      // corps
     arm(2, -21 - bob, 0.15 - swing, 1);     // bras AVANT : épaule recentrée
     part('heroHead', 13, -26 - bob, 21);    // tête croco alignée sur le col (cou au-dessus du corps)
+    // dernier outil utilisé (hache) tenu dans la main avant, hors frappe (offsets à ajuster)
+    if (hasAxe && !swing && IMG.axe && IMG.axe.complete && IMG.axe.naturalWidth) {
+      var axh = 20, axw = axh * (IMG.axe.naturalWidth / IMG.axe.naturalHeight);
+      ctx.save(); ctx.translate(12, -12 - bob); ctx.rotate(-0.4);
+      ctx.drawImage(IMG.axe, -axw * 0.3, -axh * 0.85, axw, axh);
+      ctx.restore();
+    }
     ctx.restore();
   }
 
@@ -1995,9 +2002,18 @@
     if (se < IMP) { var p = se / IMP; off = -1.5 + (p * p) * 1.85; }             // accélère vers l'impact
     else { var r = (se - IMP) / (0.34 - IMP); off = 0.35 - Math.sin(r * Math.PI) * 0.18; } // arrêt net + petit recul
     ctx.save(); ctx.translate(sx, sy - 12); ctx.rotate(ang + off);
-    ctx.strokeStyle = 'rgba(120,82,48,0.95)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(24, 0); ctx.stroke();
-    ctx.fillStyle = '#c9ced6'; ctx.beginPath(); ctx.arc(25, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+    var axeIm = IMG.axe;
+    if (axeIm && axeIm.complete && axeIm.naturalWidth) {
+      // vraie hache de Charlie : sprite ~vertical (manche bas / tête haut) -> on le couche
+      // vers l'avant. Offsets/rotation à ajuster à l'œil depuis une capture.
+      var ah = 34, aw = ah * (axeIm.naturalWidth / axeIm.naturalHeight);
+      ctx.translate(18, 0); ctx.rotate(Math.PI * 0.5);
+      ctx.drawImage(axeIm, -aw / 2, -ah * 0.5, aw, ah);
+    } else {
+      ctx.strokeStyle = 'rgba(120,82,48,0.95)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(6, 0); ctx.lineTo(24, 0); ctx.stroke();
+      ctx.fillStyle = '#c9ced6'; ctx.beginPath(); ctx.arc(25, 0, 4.5, 0, Math.PI * 2); ctx.fill();
+    }
     ctx.restore();
     // flash bref au point d'impact
     if (swing.impacted && se < IMP + 0.09) {
