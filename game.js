@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.39.0';
+  var VERSION = '0.39.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -352,7 +352,7 @@
     if (appleCount <= 0) return;
     appleCount--; eating = 0.6;
     spawnAppleBits(player.x, player.y - 24, 9);
-    floater('miam', player.x, player.y - 50);
+    floater('yum', player.x, player.y - 50);
   }
   function spawnLogs(wx, wy, dir) {
     dir = dir || 1;                          // sens de chute de l'arbre (horizontal)
@@ -824,8 +824,8 @@
     } else if (a.type === 'sleep') {
       enterTent();
     } else if (a.type === 'stoke') {
-      if (logCount > 0) { logCount--; campfire.fuel = Math.min(campfire.maxFuel, campfire.fuel + 30); spawnSparks(campfire.x, campfire.y - 6, 14); floater('+ bûche au feu', campfire.x, campfire.y - 42); shake = Math.max(shake, 2); }
-      else floater('il faut des bûches', campfire.x, campfire.y - 42);
+      if (logCount > 0) { logCount--; campfire.fuel = Math.min(campfire.maxFuel, campfire.fuel + 30); spawnSparks(campfire.x, campfire.y - 6, 14); floater('log added', campfire.x, campfire.y - 42); shake = Math.max(shake, 2); }
+      else floater('need logs', campfire.x, campfire.y - 42);
     } else if (a.type === 'feed') {
       if (appleCount > 0 && a.target) {
         appleCount--;
@@ -837,7 +837,7 @@
         spawnHeart(a.target.x, a.target.y - 54, 0);      // cœurs animés, alternés + étalés (bien AU-DESSUS de la tête)
         spawnHeart(a.target.x, a.target.y - 50, 0.4);
         spawnHeart(a.target.x, a.target.y - 58, 0.8);
-        floater('miam', a.target.x, a.target.y - 52);
+        floater('yum', a.target.x, a.target.y - 52);
       }
     }
   }
@@ -1469,7 +1469,7 @@
         ga.x += ga.vx * dt; ga.y += ga.vy * dt; ga.vx *= 0.9; ga.vy *= 0.9;
         if (ga.z <= 0) { ga.z = 0; ga.vz = 0; ga.grounded = true; }
       } else if (Math.hypot(player.x - ga.x, player.y - ga.y) < 28) {
-        appleCount++; floater('+1 pomme', ga.x, ga.y - 22); spawnAppleBits(ga.x, ga.y - 6, 6); groundApples.splice(gai, 1);
+        appleCount++; floater('+1 apple', ga.x, ga.y - 22); spawnAppleBits(ga.x, ga.y - 6, 6); groundApples.splice(gai, 1);
       }
     }
     if (eating > 0) eating -= dt;
@@ -2510,7 +2510,7 @@
     if (inTent) exitTent();
     navPath = null; goActive = false; marker = null; pendingAction = null; pointer.active = false;
     refCellX = null; refCellY = null; refreshActive();
-    floater('feu de camp', player.x, player.y - 46);
+    floater('campfire', player.x, player.y - 46);
   }
   (function setupSettings() {
     if (typeof document === 'undefined') return;
