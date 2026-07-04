@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.36.0';
+  var VERSION = '0.37.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -280,7 +280,8 @@
   var campfire = {
     x: HOME.x - 135, y: HOME.y - 6,
     cr: 24,          // collision totale : on ne passe pas à travers
-    contents: []     // vide pour l'instant (Charlie : pas de bûches dedans)
+    contents: [],    // vide pour l'instant
+    fuel: 55, maxFuel: 130 // combustible : brûle avec le temps, se nourrit de bûches, peut s'éteindre
   };
   // Tente d'Elaijah (au campement) : cliquer dessus pour aller dormir.
   var tent = { x: HOME.x + 175, y: HOME.y - 45, cr: 20 };
@@ -328,6 +329,23 @@
       parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 8 - Math.random() * 28,
         life: 0.45 + Math.random() * 0.45, t: 0, c: LEAF_COLS[(Math.random() * LEAF_COLS.length) | 0],
         w: 2 + Math.random() * 2, h: 1.5 + Math.random() * 2, rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 9 });
+    }
+  }
+  function spawnSparks(wx, wy, n) {
+    var cols = ['#ffcf5a', '#ff8a3a', '#ffd98a', '#ff6a2a'];
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 30 + Math.random() * 95;
+      parts.push({ x: wx, y: wy, vx: Math.cos(a) * sp, vy: -Math.abs(Math.sin(a) * sp) - 40 - Math.random() * 70,
+        life: 0.35 + Math.random() * 0.45, t: 0, c: cols[(Math.random() * cols.length) | 0],
+        w: 1.4 + Math.random() * 1.8, h: 1.4 + Math.random() * 1.8, rot: 0, vrot: 0 });
+    }
+  }
+  function spawnDust(wx, wy) {
+    for (var i = 0; i < 3; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 8 + Math.random() * 22;
+      parts.push({ x: wx + (Math.random() - 0.5) * 6, y: wy, vx: Math.cos(a) * sp, vy: -Math.random() * 12 - 4,
+        life: 0.3 + Math.random() * 0.25, t: 0, c: '#c6bfa6',
+        w: 1.6 + Math.random() * 2, h: 1.2 + Math.random() * 1.6, rot: Math.random() * 6.28, vrot: (Math.random() - 0.5) * 4 });
     }
   }
   function eatApple() {
@@ -567,6 +585,7 @@
   var started = false;
   var keys = {};
   var pointer = { active: false };
+  var miniInfo = null; // géométrie de la minimap (pour le clic -> déplacement)
   var marker = null;
   var goActive = false;
   // Zoom (pinch 2 doigts) : échelle du rendu autour du joueur (au centre écran).
@@ -635,12 +654,20 @@
     // 0-pomme) clic sur le compteur de pommes (espace écran) = manger une pomme.
     if (appleCount > 0 && pointer.sx >= APPLE_HUD.x && pointer.sx <= APPLE_HUD.x + APPLE_HUD.w &&
         pointer.sy >= APPLE_HUD.y && pointer.sy <= APPLE_HUD.y + APPLE_HUD.h) { eatApple(); marker = null; return; }
+    // 0-mini) clic sur la minimap (espace écran) = déplacement vers le point pointé.
+    if (miniInfo && Math.hypot(pointer.sx - miniInfo.cxm, pointer.sy - miniInfo.cym) <= miniInfo.rad) {
+      var wtx = player.x + (pointer.sx - miniInfo.cxm) / miniInfo.cell * CELL;
+      var wty = player.y + (pointer.sy - miniInfo.cym) / miniInfo.cell * CELL;
+      pendingAction = null; navPath = [{ x: wtx, y: wty }]; navI = 0; goActive = true; marker = null; return;
+    }
     // 0) réveil si on dort ; un clic sur la tente = juste se réveiller.
     if (inTent) { exitTent(); if (tentAt(mx, my)) { marker = null; return; } }
     // 0c) clic sur une créature quand on a des pommes = lui en donner une.
     if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { flashSelect({ x: cre.x, y: cre.y - 18, rx: 26, ry: 26 }); startAction('feed', cre, 42); return; } }
     // 0b) clic sur la tente (éveillé) = aller dormir.
     if (!inTent && tentAt(mx, my)) { flashSelect({ x: tent.x, y: tent.y - 28, rx: 38, ry: 34 }); startAction('sleep', tent, tent.cr + PR + 12); return; }
+    // clic sur le feu de camp = y ajouter une bûche (le nourrir) pour le faire grandir.
+    if (campfireAt(mx, my)) { flashSelect({ x: campfire.x, y: campfire.y - 6, rx: 26, ry: 22 }); startAction('stoke', campfire, campfire.cr + PR + 14); return; }
     // 1) clic sur la hache au sol ?
     if (!hasAxe && !axe.picked && Math.hypot(mx - axe.x, my - axe.y) < 30) {
       flashSelect({ x: axe.x, y: axe.y - 8, rx: 18, ry: 15 }); startAction('pickup', null, PR + 26); return;
@@ -758,6 +785,7 @@
     var im = IMG.tent, h = 68, w = im && im.naturalWidth ? h * (im.naturalWidth / im.naturalHeight) : 60;
     return mx > tent.x - w * 0.55 && mx < tent.x + w * 0.55 && my > tent.y - h && my < tent.y + 12;
   }
+  function campfireAt(mx, my) { return Math.hypot(mx - campfire.x, my - (campfire.y - 12)) < campfire.cr + 16; }
   function enterTent() {
     inTent = true; player.vx = 0; player.vy = 0;
     navPath = null; goActive = false; marker = null; zAccum = 0.3;
@@ -788,6 +816,9 @@
       startSwing(a.target);
     } else if (a.type === 'sleep') {
       enterTent();
+    } else if (a.type === 'stoke') {
+      if (logCount > 0) { logCount--; campfire.fuel = Math.min(campfire.maxFuel, campfire.fuel + 30); spawnSparks(campfire.x, campfire.y - 6, 14); floater('+ bûche au feu', campfire.x, campfire.y - 42); shake = Math.max(shake, 2); }
+      else floater('il faut des bûches', campfire.x, campfire.y - 42);
     } else if (a.type === 'feed') {
       if (appleCount > 0 && a.target) {
         appleCount--;
@@ -847,7 +878,7 @@
       if (ek.length > 120000) return; // garde-fou taille de sauvegarde
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         v: 1, px: player.x, py: player.y, logCount: logCount,
-        appleCount: appleCount, picked: pickedApples,
+        appleCount: appleCount, picked: pickedApples, fuel: campfire.fuel,
         hasAxe: hasAxe, axePicked: axe.picked,
         explored: ek, removed: Object.keys(removedTrees)
       }));
@@ -859,6 +890,7 @@
     chunks = {};
     logCount = s.logCount || 0; hasAxe = !!s.hasAxe; axe.picked = !!s.axePicked;
     appleCount = s.appleCount || 0; pickedApples = s.picked || {}; groundApples.length = 0;
+    campfire.fuel = (s.fuel != null) ? s.fuel : 55;
     player.x = s.px || HOME.x; player.y = s.py || HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null; refreshActive();
   }
@@ -866,7 +898,7 @@
     explored = {}; removedTrees = {}; chunks = {};
     logs.length = 0; parts.length = 0; floaters.length = 0;
     logCount = 0; hasAxe = false; axe.picked = false;
-    appleCount = 0; pickedApples = {}; groundApples.length = 0;
+    appleCount = 0; pickedApples = {}; groundApples.length = 0; campfire.fuel = 55;
     player.x = HOME.x; player.y = HOME.y; player.vx = 0; player.vy = 0;
     refCellX = null; refCellY = null;
     try { localStorage.removeItem(SAVE_KEY); } catch (e) {}
@@ -1084,7 +1116,7 @@
     var moved = Math.hypot(player.vx, player.vy) * dt;
     if (moved > 0.5) {
       stepAccum += moved;
-      if (stepAccum >= STEP_DIST) { stepAccum -= STEP_DIST; if (!onWater) playStep(); }
+      if (stepAccum >= STEP_DIST) { stepAccum -= STEP_DIST; if (!onWater) { playStep(); spawnDust(player.x, player.y); } }
     } else {
       stepAccum = STEP_DIST; // à l'arrêt : le prochain mouvement déclenche un pas tout de suite
     }
@@ -1351,6 +1383,9 @@
       if (ht.delay > 0) { ht.delay -= dt; continue; }
       ht.t += dt; ht.y -= 26 * dt; ht.x += ht.drift * dt; if (ht.t >= ht.life) hearts.splice(hi, 1);
     }
+
+    // feu de camp : consomme du combustible ; sans bûches, il finit par s'éteindre.
+    if (campfire.fuel > 0) campfire.fuel = Math.max(0, campfire.fuel - dt * 0.7);
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
@@ -1723,21 +1758,31 @@
     // les deux plans. Additif pour l'effet lumineux qui vacille.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
-    var fn = 5, fbase = sy - 6;
-    for (var fi = 0; fi < fn; fi++) {
-      var fx = sx + (fi - (fn - 1) / 2) * 6.5;
-      var flick = Math.sin(T * 11 + fi * 1.7) * 0.5 + Math.sin(T * 19 + fi) * 0.3 + 0.5;
-      var fh = (13 + flick * 8) * (1 - Math.abs(fi - (fn - 1) / 2) / fn * 0.5);
-      var fg = ctx.createLinearGradient(fx, fbase, fx, fbase - fh);
-      fg.addColorStop(0, 'rgba(255,120,40,0.85)');
-      fg.addColorStop(0.55, 'rgba(255,185,65,0.8)');
-      fg.addColorStop(1, 'rgba(255,240,150,0)');
-      ctx.fillStyle = fg;
-      ctx.beginPath();
-      ctx.moveTo(fx - 4, fbase);
-      ctx.quadraticCurveTo(fx - 3.5, fbase - fh * 0.55, fx, fbase - fh);
-      ctx.quadraticCurveTo(fx + 3.5, fbase - fh * 0.55, fx + 4, fbase);
-      ctx.closePath(); ctx.fill();
+    var ff = Math.max(0, Math.min(1.5, cf.fuel / 55)), fbase = sy - 6;
+    if (ff < 0.04) {
+      // ÉTEINT : quelques braises rougeoyantes
+      for (var ei = 0; ei < 4; ei++) {
+        var ex = sx + (ei - 1.5) * 7, egl = 0.28 + Math.sin(T * 3 + ei * 1.3) * 0.14;
+        ctx.fillStyle = 'rgba(210,70,28,' + Math.max(0, egl).toFixed(2) + ')';
+        ctx.beginPath(); ctx.arc(ex, fbase, 2.3, 0, Math.PI * 2); ctx.fill();
+      }
+    } else {
+      var fn = 3 + Math.round(ff * 3); // plus de combustible = plus de flammes, plus hautes
+      for (var fi = 0; fi < fn; fi++) {
+        var fx = sx + (fi - (fn - 1) / 2) * 6.5;
+        var flick = Math.sin(T * 11 + fi * 1.7) * 0.5 + Math.sin(T * 19 + fi) * 0.3 + 0.5;
+        var fh = (13 + flick * 8) * (0.55 + ff * 0.6) * (1 - Math.abs(fi - (fn - 1) / 2) / fn * 0.5);
+        var fg = ctx.createLinearGradient(fx, fbase, fx, fbase - fh);
+        fg.addColorStop(0, 'rgba(255,120,40,0.85)');
+        fg.addColorStop(0.55, 'rgba(255,185,65,0.8)');
+        fg.addColorStop(1, 'rgba(255,240,150,0)');
+        ctx.fillStyle = fg;
+        ctx.beginPath();
+        ctx.moveTo(fx - 4, fbase);
+        ctx.quadraticCurveTo(fx - 3.5, fbase - fh * 0.55, fx, fbase - fh);
+        ctx.quadraticCurveTo(fx + 3.5, fbase - fh * 0.55, fx + 4, fbase);
+        ctx.closePath(); ctx.fill();
+      }
     }
     ctx.restore();
     // 3) DEVANT (arc) : bas ~2px sous la base -> chevauche bien le fond (pas de sol visible).
@@ -1745,10 +1790,11 @@
   }
   // Halo lumineux du feu de camp : subtil le jour, fort la nuit. Additif.
   function drawCampLight(cam, dark, zoom) {
+    var ff = Math.max(0, Math.min(1.5, campfire.fuel / 55)); if (ff < 0.03) return; // éteint = pas de halo
     var lx = W / 2 + (campfire.x - player.x) * zoom, ly = H / 2 + (campfire.y - 10 - player.y) * zoom;
     if (lx < -260 || lx > W + 260 || ly < -260 || ly > H + 260) return;
-    var R = (150 + Math.sin(T * 8) * 6 + Math.sin(T * 13) * 3) * zoom;
-    var inten = 0.26 + dark * 0.55;
+    var R = (150 * (0.55 + ff * 0.55) + Math.sin(T * 8) * 6 + Math.sin(T * 13) * 3) * zoom;
+    var inten = (0.26 + dark * 0.55) * Math.min(1, ff);
     var g = ctx.createRadialGradient(lx, ly, 8, lx, ly, R);
     g.addColorStop(0, 'rgba(255,186,98,' + inten.toFixed(3) + ')');
     g.addColorStop(0.5, 'rgba(255,150,60,' + (inten * 0.4).toFixed(3) + ')');
@@ -2264,9 +2310,10 @@
     }
     // perso au centre
     ctx.fillStyle = '#ef8a68';
-    ctx.beginPath(); ctx.arc(mx + size / 2, my + size / 2, 3.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cxm, cym, 3.2, 0, Math.PI * 2); ctx.fill();
     ctx.lineWidth = 1; ctx.strokeStyle = '#fff'; ctx.stroke();
     ctx.restore();
+    miniInfo = { cxm: cxm, cym: cym, rad: rad, cell: cell }; // pour le clic -> déplacement
   }
 
   function render(now) {
@@ -2377,6 +2424,11 @@
     }
     drawCampLight(cam, dark, zoom);
     renderFog(cam, zoom);
+
+    // léger vignettage (ambiance, sous le HUD)
+    var vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.72);
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(15,20,10,0.22)');
+    ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
 
     // HUD (non zoomé)
     renderMiniMap();
