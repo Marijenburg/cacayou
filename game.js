@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.25.0';
+  var VERSION = '0.26.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -209,6 +209,30 @@
       var gflip = grnd() < 0.5;
       if (isWater(gx, gy)) continue;          // pas d'herbe sur l'eau (randoms déjà tirés = flux stable)
       grass.push({ x: gx, y: gy, key: 'grass' + gk, s: gsc, flip: gflip });
+    }
+    // Bosquets "petit bois" : certains chunks portent un AMAS dense d'arbres, via un
+    // flux aléatoire SÉPARÉ (ne décale pas le placement existant). Zones à contourner.
+    var bgr = mulberry32((hashChunk(cx, cy) ^ 0x51ed2701) >>> 0);
+    if (bgr() < 0.20) {
+      var bcx = (cx + 0.2 + bgr() * 0.6) * CHUNK, bcy = (cy + 0.2 + bgr() * 0.6) * CHUNK;
+      if (Math.hypot(bcx - HOME.x, bcy - HOME.y) >= HOME_CLEAR + 140) {
+        var bn = 8 + ((bgr() * 8) | 0), brad = 70 + bgr() * 90;
+        for (var bk = 0; bk < bn; bk++) {
+          var ba = bgr() * Math.PI * 2, bdd = Math.sqrt(bgr()) * brad; // densité vers le centre
+          var bx = bcx + Math.cos(ba) * bdd, by = bcy + Math.sin(ba) * bdd;
+          var btv = bgr(), bkey = btv < 0.4 ? 'treeA' : (btv < 0.76 ? 'treeB' : 'treeC'), bs = 0.8 + bgr() * 0.4;
+          if (isWater(bx, by)) continue;
+          var bid = cx + '_' + cy + '_g' + bk;
+          if (removedTrees[bid]) continue;
+          var btree = { id: bid, ck: cx + ',' + cy, key: bkey, type: 'tree', x: bx, y: by, s: bs, cr: 9 * bs, hp: 5, dead: false, felling: null };
+          var bar = mulberry32((hashChunk(cx, cy) ^ ((bk + 130) * 0x9e3779b9)) >>> 0);
+          var borig = (bar() < 0.4) ? (1 + ((bar() * 3) | 0)) : 0;
+          btree.appleSlots = [];
+          for (var baj = 0; baj < borig; baj++) btree.appleSlots.push({ ox: (bar() - 0.5) * 0.5, oy: 0.28 + bar() * 0.34 });
+          btree.apples = Math.max(0, borig - (pickedApples[bid] || 0));
+          list.push(btree);
+        }
+      }
     }
     return { decos: list, grass: grass };
   }
