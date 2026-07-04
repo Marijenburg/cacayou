@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.28.0';
+  var VERSION = '0.29.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -636,16 +636,17 @@
     // 0) réveil si on dort ; un clic sur la tente = juste se réveiller.
     if (inTent) { exitTent(); if (tentAt(mx, my)) { marker = null; return; } }
     // 0c) clic sur une créature quand on a des pommes = lui en donner une.
-    if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { startAction('feed', cre, 42); return; } }
+    if (appleCount > 0) { var cre = creatureAt(mx, my); if (cre) { flashSelect(cre.x, cre.y, 44); startAction('feed', cre, 42); return; } }
     // 0b) clic sur la tente (éveillé) = aller dormir.
-    if (!inTent && tentAt(mx, my)) { startAction('sleep', tent, tent.cr + PR + 12); return; }
+    if (!inTent && tentAt(mx, my)) { flashSelect(tent.x, tent.y, 46); startAction('sleep', tent, tent.cr + PR + 12); return; }
     // 1) clic sur la hache au sol ?
     if (!hasAxe && !axe.picked && Math.hypot(mx - axe.x, my - axe.y) < 30) {
-      startAction('pickup', null, PR + 26); return;
+      flashSelect(axe.x, axe.y, 30); startAction('pickup', null, PR + 26); return;
     }
     // 2) clic sur un arbre ?
     var tree = treeAt(mx, my);
     if (tree) {
+      var tim = IMG[tree.key]; flashSelect(tree.x, tree.y, TARGET_H.tree * tree.s * (tim && tim.naturalHeight ? tim.naturalWidth / tim.naturalHeight : 0.5));
       if (!hasAxe) {
         floater('You need an axe', tree.x, tree.y - 44);
         var adj0 = adjacencyPoint(tree.x, tree.y, tree.cr + PR + 8);
@@ -663,15 +664,44 @@
 
   // Arbre sous le point monde (mx,my) : dans les bornes du sprite, le plus au
   // premier plan (plus grand y) en cas de chevauchement.
+  // Flash de sélection : anneau lumineux bref sur l'élément cliqué (lisibilité).
+  var selectFx = null;
+  function flashSelect(x, y, w) { selectFx = { x: x, y: y, w: w, t0: T }; }
+
+  // Masque alpha d'un sprite (offscreen), pour un test de clic PIXEL-PRÉCIS.
+  var alphaMasks = {};
+  function getAlphaMask(key) {
+    if (key in alphaMasks) return alphaMasks[key];
+    var im = IMG[key];
+    if (!im || !im.complete || !im.naturalWidth) return null; // pas prêt -> fallback bbox
+    try {
+      var oc = document.createElement('canvas'); oc.width = im.naturalWidth; oc.height = im.naturalHeight;
+      var octx = oc.getContext('2d'); octx.drawImage(im, 0, 0);
+      var data = octx.getImageData(0, 0, oc.width, oc.height).data;
+      var a8 = new Uint8Array(oc.width * oc.height);
+      for (var i = 0; i < a8.length; i++) a8[i] = data[i * 4 + 3];
+      alphaMasks[key] = { w: oc.width, h: oc.height, a: a8 }; return alphaMasks[key];
+    } catch (e) { alphaMasks[key] = null; return null; }
+  }
+  function alphaHit(m, u, v, r) {
+    var ui = u | 0, vi = v | 0;
+    for (var dy = -r; dy <= r; dy++) for (var dx = -r; dx <= r; dx++) {
+      var x = ui + dx, y = vi + dy;
+      if (x < 0 || y < 0 || x >= m.w || y >= m.h) continue;
+      if (m.a[y * m.w + x] > 40) return true;
+    }
+    return false;
+  }
   function treeAt(mx, my) {
     var best = null;
     for (var i = 0; i < decos.length; i++) {
       var d = decos[i]; if (d.type !== 'tree' || d.dead) continue;
       var im = IMG[d.key]; if (!im || !im.naturalWidth) continue;
       var h = TARGET_H[d.type] * d.s, w = h * (im.naturalWidth / im.naturalHeight);
-      if (mx > d.x - w * 0.5 && mx < d.x + w * 0.5 && my > d.y - h && my < d.y + 6) {
-        if (!best || d.y > best.y) best = d;
-      }
+      if (mx < d.x - w * 0.5 || mx > d.x + w * 0.5 || my < d.y - h || my > d.y + 6) continue; // bbox rapide
+      var m = getAlphaMask(d.key), hit = true;
+      if (m) { var u = ((mx - (d.x - w / 2)) / w) * m.w, v = ((my - (d.y - h)) / h) * m.h; hit = alphaHit(m, u, v, 2); }
+      if (hit && (!best || d.y > best.y)) best = d;
     }
     return best;
   }
@@ -679,9 +709,9 @@
   function creatureAt(mx, my) {
     var list = [monster, panther, turtle, gturtle];
     for (var i = 0; i < walkers.length; i++) list.push(walkers[i]);
-    var best = null, bestD = 40;
+    var best = null, bestD = 32;
     for (var j = 0; j < list.length; j++) {
-      var c = list[j], dd = Math.hypot(mx - c.x, my - (c.y - 14));
+      var c = list[j], dd = Math.hypot(mx - c.x, my - (c.y - 16));
       if (dd < bestD) { bestD = dd; best = c; }
     }
     return best;
@@ -1867,6 +1897,16 @@
     else { ctx.fillStyle = '#d98a4a'; ctx.strokeStyle = '#8a5228'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(0, 0, ball.r, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     ctx.restore();
   }
+  // Flash de sélection : anneau lumineux bref sur l'élément cliqué.
+  function drawSelectFx(cam) {
+    if (!selectFx) return;
+    var e = T - selectFx.t0; if (e > 0.45) { selectFx = null; return; }
+    var k = 1 - e / 0.45, s = selectFx, sx = s.x - cam.x, sy = s.y - cam.y;
+    ctx.save(); ctx.globalAlpha = k * 0.95; ctx.strokeStyle = '#fff3c0'; ctx.lineWidth = 2.6;
+    var rr = Math.max(14, s.w * 0.42) * (1 + (1 - k) * 0.4);
+    ctx.beginPath(); ctx.ellipse(sx, sy, rr, rr * 0.4, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
   // Petits coeurs au-dessus des créatures nourries (dessin de Charlie à venir -> fallback vectoriel).
   function drawHearts(cam) {
     for (var i = 0; i < hearts.length; i++) {
@@ -2183,6 +2223,7 @@
     drawNavPath(cam);
     drawDestMarker(cam, now);
     drawZs(cam);
+    drawSelectFx(cam);
     drawFloaters(cam);
     drawHearts(cam);
 
