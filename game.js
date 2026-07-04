@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.21.0';
+  var VERSION = '0.22.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -139,6 +139,9 @@
     pan_head: 'assets/pan_head.png', pan_body: 'assets/pan_body.png',
     pan_legFrontNear: 'assets/pan_legFrontNear.png', pan_legFrontFar: 'assets/pan_legFrontFar.png',
     pan_legBackNear: 'assets/pan_legBackNear.png', pan_legBackFar: 'assets/pan_legBackFar.png',
+    // Tortue de Charlie (riggée) : tête + carapace-avec-queue (élément central) + 4 pattes.
+    t_head: 'assets/t_head.png', t_body: 'assets/t_body.png',
+    t_leg1: 'assets/t_leg1.png', t_leg2: 'assets/t_leg2.png', t_leg3: 'assets/t_leg3.png', t_leg4: 'assets/t_leg4.png',
     heroHead: 'assets/hero_head.png',   // perso principal (dessiné par Charlie) : tête de croco
     heroBody: 'assets/hero_body.png',
     heroPack: 'assets/hero_pack.png',   // sac à dos + matelas rose
@@ -415,6 +418,13 @@
     x: HOME.x - 520, y: HOME.y + 430,
     tx: HOME.x - 520, ty: HOME.y + 430,
     retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 1.15, step: 0
+  };
+
+  // Tortue (dessinée par Charlie, riggée) : se balade TRÈS lentement sur la map.
+  var turtle = {
+    x: HOME.x + 500, y: HOME.y - 380,
+    tx: HOME.x + 500, ty: HOME.y - 380,
+    retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 0.95, step: 0
   };
 
   // ── Personnage (forme simple) ────────────────────────────────────────────
@@ -970,6 +980,35 @@
       if (panther.step >= 62) { panther.step -= 62; walkerStep(panther); }
     } else { panther.phase += dt * 1.6; }
 
+    // tortue : se balade TRÈS lentement vers des points variés, sur terre.
+    var tdx0 = turtle.x - player.x, tdy0 = turtle.y - player.y;
+    if (tdx0 * tdx0 + tdy0 * tdy0 > 1900 * 1900) {
+      var tang = Math.random() * Math.PI * 2;
+      for (var tti = 0; tti < 8; tti++) {
+        var tdd = 820 + Math.random() * 420;
+        var tnx = player.x + Math.cos(tang) * tdd, tny = player.y + Math.sin(tang) * tdd;
+        if (!isWater(tnx, tny)) { turtle.x = tnx; turtle.y = tny; turtle.tx = tnx; turtle.ty = tny; break; }
+        tang += 1.4;
+      }
+      turtle.retarget = 0;
+    }
+    turtle.retarget -= dt;
+    if (turtle.retarget <= 0) {
+      turtle.retarget = 4 + Math.random() * 6;
+      var uta = Math.random() * Math.PI * 2, utd = 180 + Math.random() * 360;
+      var utx = turtle.x + Math.cos(uta) * utd, uty = turtle.y + Math.sin(uta) * utd;
+      if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
+    }
+    var uvx = turtle.tx - turtle.x, uvy = turtle.ty - turtle.y, uvd = Math.hypot(uvx, uvy);
+    if (uvd > 5) {
+      var usp = 16; // très lent (tortue)
+      turtle.x += (uvx / uvd) * usp * dt; turtle.y += (uvy / uvd) * usp * dt;
+      if (Math.abs(uvx) > 2) turtle.face = uvx < 0 ? -1 : 1;
+      turtle.phase += dt * 5;
+      turtle.step += usp * dt;
+      if (turtle.step >= 40) { turtle.step -= 40; walkerStep(turtle); }
+    } else { turtle.phase += dt * 1.2; }
+
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
 
@@ -1428,6 +1467,36 @@
     ctx.restore();
   }
 
+  // Tortue : carapace (élément central, avec la queue) + tête à l'avant + 4 pattes
+  // qui pagayent doucement. Regarde à GAUCHE par défaut -> miroir quand elle va à droite.
+  function drawTurtle(mo, sx, sy) {
+    if (!IMG.t_body || !IMG.t_body.complete || !IMG.t_body.naturalWidth) return;
+    var p = mo.phase, s = mo.sz, bob = Math.sin(p * 2) * 0.7, sw = 0.3;
+    function leg(key, ax, ay, th, base, ang) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.save(); ctx.translate(ax * s, ay * s); ctx.rotate(base + ang); ctx.drawImage(im, -w / 2, 0, w, h); ctx.restore();
+    }
+    function ctr(key, ax, ay, th) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var h = th * s, w = h * (im.naturalWidth / im.naturalHeight);
+      ctx.drawImage(im, ax * s - w / 2, ay * s - h / 2, w, h);
+    }
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, 21 * s, 6 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (mo.face > 0) ctx.scale(-1, 1);
+    leg('t_leg2', -13, -17, 15, -0.5, Math.sin(p + Math.PI) * sw);  // patte fond avant (haut-gauche)
+    leg('t_leg4', 13, -17, 15, 0.5, Math.sin(p) * sw);             // patte fond arrière (haut-droite)
+    ctr('t_body', 0, -16 + bob, 30);                               // carapace (centre) + queue
+    ctr('t_head', -18, -14 + bob, 20);                             // tête (avant/gauche)
+    leg('t_leg1', -14, -11, 17, -0.4, Math.sin(p) * sw);           // patte proche avant (bas-gauche)
+    leg('t_leg3', 14, -11, 17, 0.4, Math.sin(p + Math.PI) * sw);   // patte proche arrière (bas-droite)
+    ctx.restore();
+  }
+
   // 1er monstre d'Elaijah : anim d'idle (respiration + dandinement + balancement).
   function drawMonster(sx, sy) {
     var im = IMG.monster;
@@ -1663,6 +1732,7 @@
     items.push({ y: tent.y, sx: tent.x - cam.x, sy: tent.y - cam.y, tent: true });
     items.push({ y: monster.y, sx: monster.x - cam.x, sy: monster.y - cam.y, monster: true });
     items.push({ y: panther.y, sx: panther.x - cam.x, sy: panther.y - cam.y, panther: true });
+    items.push({ y: turtle.y, sx: turtle.x - cam.x, sy: turtle.y - cam.y, turtle: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
@@ -1674,6 +1744,7 @@
       else if (it.tent) drawTent(tent, it.sx, it.sy);
       else if (it.monster) drawMonster(it.sx, it.sy);
       else if (it.panther) drawPanther(panther, it.sx, it.sy);
+      else if (it.turtle) drawTurtle(turtle, it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
     }
