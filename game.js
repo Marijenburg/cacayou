@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.31.1';
+  var VERSION = '0.32.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -522,6 +522,8 @@
     state: 'walk', stateT: 3 + Math.random() * 4, fold: 0, blink: 0
   };
 
+  var FOLLOW_DIST = 82; // distance de suivi quand une créature nourrie nous suit (pas collée)
+
   // Ballon près du camp : le perso le percute -> petit saut + part à l'opposé, roule court.
   var ball = { x: HOME.x + 40, y: HOME.y + 120, vx: 0, vy: 0, z: 0, vz: 0, r: 15, rot: 0, vrot: 0, kickCd: 0 };
   var hearts = [], heartAlt = 0; // petits coeurs (2 variantes alternées) au-dessus des créatures nourries
@@ -789,7 +791,8 @@
     } else if (a.type === 'feed') {
       if (appleCount > 0 && a.target) {
         appleCount--;
-        a.target.eat = 1.5; // la créature s'arrête et mange pendant ce temps
+        a.target.eat = 1.5;      // la créature s'arrête et mange pendant ce temps
+        a.target.follow = 10;    // puis elle nous suit un moment (rafraîchi à chaque pomme)
         spawnAppleBits(a.target.x, a.target.y - 16, 12);
         spawnHeart(a.target.x, a.target.y - 54, 0);      // cœurs animés, alternés + étalés (bien AU-DESSUS de la tête)
         spawnHeart(a.target.x, a.target.y - 50, 0.4);
@@ -1141,6 +1144,7 @@
       monster.ty = monster.hy + (Math.random() - 0.5) * 210;
     }
     if (monster.eat > 0) monster.eat -= dt;
+    if (monster.follow > 0 && !(monster.eat > 0)) { monster.follow -= dt; var mfx = monster.x - player.x, mfy = monster.y - player.y, mfd = Math.hypot(mfx, mfy) || 1; monster.tx = player.x + (mfx / mfd) * FOLLOW_DIST; monster.ty = player.y + (mfy / mfd) * FOLLOW_DIST; monster.retarget = 1; }
     var mdx = monster.tx - monster.x, mdy = monster.ty - monster.y, mdd = Math.hypot(mdx, mdy);
     if (mdd > 4 && !(monster.eat > 0)) {
       monster.x += (mdx / mdd) * 26 * dt; monster.y += (mdy / mdd) * 26 * dt;
@@ -1165,6 +1169,7 @@
       mo.retarget -= dt;
       if (mo.retarget <= 0) { mo.retarget = 2 + Math.random() * 4.5; mo.tx = mo.hx + (Math.random() - 0.5) * 480; mo.ty = mo.hy + (Math.random() - 0.5) * 480; }
       if (mo.eat > 0) mo.eat -= dt;
+      if (mo.follow > 0 && !(mo.eat > 0)) { mo.follow -= dt; var wfx = mo.x - player.x, wfy = mo.y - player.y, wfd = Math.hypot(wfx, wfy) || 1; mo.tx = player.x + (wfx / wfd) * FOLLOW_DIST; mo.ty = player.y + (wfy / wfd) * FOLLOW_DIST; mo.retarget = 1; }
       var wdx = mo.tx - mo.x, wdy = mo.ty - mo.y, wdd = Math.hypot(wdx, wdy);
       if (wdd > 5 && !(mo.eat > 0)) {
         mo.x += (wdx / wdd) * 34 * dt; mo.y += (wdy / wdd) * 34 * dt;
@@ -1195,6 +1200,7 @@
       if (!isWater(pntx, pnty)) { panther.tx = pntx; panther.ty = pnty; }
     }
     if (panther.eat > 0) panther.eat -= dt;
+    if (panther.follow > 0 && !(panther.eat > 0)) { panther.follow -= dt; var pfx = panther.x - player.x, pfy = panther.y - player.y, pfd = Math.hypot(pfx, pfy) || 1; panther.tx = player.x + (pfx / pfd) * FOLLOW_DIST; panther.ty = player.y + (pfy / pfd) * FOLLOW_DIST; panther.retarget = 1; }
     var pvx = panther.tx - panther.x, pvy = panther.ty - panther.y, pvd = Math.hypot(pvx, pvy);
     if (pvd > 5 && !(panther.eat > 0)) {
       var psp = 40; // prowl
@@ -1225,6 +1231,7 @@
       if (!isWater(utx, uty)) { turtle.tx = utx; turtle.ty = uty; }
     }
     if (turtle.eat > 0) turtle.eat -= dt;
+    if (turtle.follow > 0 && !(turtle.eat > 0)) { turtle.follow -= dt; var tfx = turtle.x - player.x, tfy = turtle.y - player.y, tfd = Math.hypot(tfx, tfy) || 1; turtle.tx = player.x + (tfx / tfd) * FOLLOW_DIST; turtle.ty = player.y + (tfy / tfd) * FOLLOW_DIST; turtle.retarget = 1; }
     var uvx = turtle.tx - turtle.x, uvy = turtle.ty - turtle.y, uvd = Math.hypot(uvx, uvy);
     if (uvd > 5 && !(turtle.eat > 0)) {
       var usp = 16; // très lent (tortue)
@@ -1255,6 +1262,7 @@
       if (!isWater(gtx, gty)) { gturtle.tx = gtx; gturtle.ty = gty; }
     }
     if (gturtle.eat > 0) gturtle.eat -= dt;
+    if (gturtle.follow > 0 && !(gturtle.eat > 0)) { gturtle.follow -= dt; var gfx = gturtle.x - player.x, gfy = gturtle.y - player.y, gfd = Math.hypot(gfx, gfy) || 1; gturtle.tx = player.x + (gfx / gfd) * FOLLOW_DIST; gturtle.ty = player.y + (gfy / gfd) * FOLLOW_DIST; gturtle.retarget = 1; }
     var gvx = gturtle.tx - gturtle.x, gvy = gturtle.ty - gturtle.y, gvd = Math.hypot(gvx, gvy);
     if (gvd > 5 && !(gturtle.eat > 0)) {
       var gsp = 15;
