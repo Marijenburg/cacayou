@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.33.1';
+  var VERSION = '0.34.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -553,10 +553,10 @@
   var revealCv = document.createElement('canvas'); // masque de révélation basse résolution
   var revealCtx = revealCv.getContext('2d');
 
-  var VISION = 165; // rayon de vision claire autour du perso (px)
+  var VISION = 235; // rayon de vision claire autour du perso (px) — élargi (Charlie)
 
   function reveal() {
-    var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL), R = 4;
+    var pc = Math.floor(player.x / CELL), pr = Math.floor(player.y / CELL), R = 6;
     for (var r = -R; r <= R; r++) for (var c = -R; c <= R; c++) {
       if (c * c + r * r > R * R) continue;
       explored[(pc + c) + ',' + (pr + r)] = 1;
