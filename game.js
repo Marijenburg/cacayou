@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.38.1';
+  var VERSION = '0.39.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -791,9 +791,11 @@
     return mx > tent.x - w * 0.55 && mx < tent.x + w * 0.55 && my > tent.y - h && my < tent.y + 12;
   }
   function campfireAt(mx, my) { return Math.hypot(mx - campfire.x, my - (campfire.y - 12)) < campfire.cr + 16; }
+  var sleepFx = null; // transition de sommeil (fondu au noir + saut à l'aube + beau temps)
   function enterTent() {
     inTent = true; player.vx = 0; player.vy = 0;
     navPath = null; goActive = false; marker = null; zAccum = 0.3;
+    sleepFx = { t0: T, skipped: false };
   }
   function exitTent() {
     if (!inTent) return; inTent = false;
@@ -1435,6 +1437,16 @@
 
     // tente : Z's du sommeil qui s'envolent quand on dort dedans
     if (inTent) { zAccum += dt; if (zAccum >= 0.85) { zAccum = 0; spawnZ(); } }
+    // transition de sommeil : à mi-fondu, saute à l'AUBE suivante + dégage la pluie, puis réveille.
+    if (sleepFx) {
+      var slp = T - sleepFx.t0;
+      if (!sleepFx.skipped && slp >= 0.85) {
+        sleepFx.skipped = true;
+        dayT = (Math.floor(dayT / CYCLE) + 1) * CYCLE + 5;
+        weather.state = 'clear'; weather.rain = 0; weather.t = 50 + Math.random() * 60;
+      }
+      if (slp >= 1.8) { sleepFx = null; exitTent(); }
+    }
     for (var zi = zs.length - 1; zi >= 0; zi--) { zs[zi].t += dt; if (zs[zi].t >= zs[zi].life) zs.splice(zi, 1); }
 
     // bûches : mini-saut de spawn, puis ramassables à proximité.
@@ -2482,6 +2494,14 @@
     drawAxeHud();
     drawLogHud();
     drawAppleHud();
+
+    // fondu de sommeil (par-dessus tout) : noir qui monte, "Zzz", puis se lève sur le matin
+    if (sleepFx) {
+      var se2 = T - sleepFx.t0, sa;
+      if (se2 < 0.85) sa = se2 / 0.85; else if (se2 < 0.95) sa = 1; else sa = Math.max(0, 1 - (se2 - 0.95) / 0.85);
+      ctx.fillStyle = 'rgba(8,10,18,' + sa.toFixed(3) + ')'; ctx.fillRect(0, 0, W, H);
+      if (sa > 0.45) { ctx.save(); ctx.globalAlpha = (sa - 0.45) * 1.8; ctx.fillStyle = '#cfe0ff'; ctx.font = '600 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.fillText('Zzz…', W / 2, H / 2); ctx.restore(); }
+    }
   }
 
   // ── Réglages (Settings) : volume, luminosité, téléport au feu de camp ──────
