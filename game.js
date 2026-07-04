@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.24.0';
+  var VERSION = '0.25.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -151,6 +151,10 @@
     tent: 'assets/tent.png',            // tente violette d'Elaijah (on y dort)
     zzz: 'assets/zzz.png',              // Z du sommeil (détouré + passé en blanc)
     apple: 'assets/apple.png',          // pomme dessinée par Charlie + Elaijah
+    // Petit robot de Charlie (riggé humanoïde) : tête, torse, 2 bras, 2 jambes.
+    rob_head: 'assets/rob_head.png', rob_body: 'assets/rob_body.png',
+    rob_armL: 'assets/rob_armL.png', rob_armR: 'assets/rob_armR.png',
+    rob_legL: 'assets/rob_legL.png', rob_legR: 'assets/rob_legR.png',
 
     // Touffes d'herbe dessinées à la main par Charlie (détourées), semées en RNG au sol.
     grass1: 'assets/grass1.png', grass2: 'assets/grass2.png', grass3: 'assets/grass3.png', grass4: 'assets/grass4.png',
@@ -273,11 +277,13 @@
   var APPLE_COLS = ['#d94f3a', '#e0c043', '#e88a2a', '#7fae5b'];
   // Réglages joueur (persistés) : volume + luminosité.
   var userVolume = 1, userBright = 1, masterGain = null;
-  function spawnApple(wx, wy) {
+  function spawnApple(wx, wy, z0) {
+    // wy = position AU SOL (base de l'arbre, +qq px pour passer DEVANT au tri de profondeur) ;
+    // z0 = hauteur de départ (canopée) -> la pomme tombe visiblement devant l'arbre.
     groundApples.push({
-      x: wx + (Math.random() - 0.5) * 12, y: wy + (Math.random() - 0.5) * 8,
-      vx: (Math.random() - 0.5) * 34, vy: (Math.random() - 0.5) * 14,
-      z: 12 + Math.random() * 10, vz: 45 + Math.random() * 45,
+      x: wx + (Math.random() - 0.5) * 16, y: wy + (Math.random() - 0.5) * 6,
+      vx: (Math.random() - 0.5) * 26, vy: (Math.random() - 0.5) * 10,
+      z: (z0 || 14) + Math.random() * 8, vz: 4 + Math.random() * 16,
       sz: 0.9 + Math.random() * 0.25, grounded: false, t: 0
     });
   }
@@ -474,6 +480,13 @@
     retarget: 0, phase: Math.random() * 6, face: 1, foot: 0, sz: 1.0, step: 0
   };
 
+  // Petit robot (riggé humanoïde) : marche robotique + passages en VEILLE (mode bloc).
+  var robot = {
+    x: HOME.x + 640, y: HOME.y + 280, tx: HOME.x + 640, ty: HOME.y + 280,
+    phase: 0, face: 1, sz: 0.95, step: 0, retarget: 0,
+    state: 'walk', stateT: 3 + Math.random() * 4, fold: 0, blink: 0
+  };
+
   // ── Personnage (forme simple) ────────────────────────────────────────────
   var player = { x: HOME.x, y: HOME.y, vx: 0, vy: 0, speed: 245, facing: { x: 0, y: 1 } };
   var hasBoat = true;   // bateau dans l'inventaire dès le départ
@@ -551,7 +564,8 @@
       pointer.active = true;
       pointer.sx = e.clientX; pointer.sy = e.clientY;
       marker = pointToWorld(e);
-      goActive = false;
+      // NE PAS couper la nav en cours : le perso garde son élan jusqu'au relâchement
+      // (le nouveau cap est posé au pointerup) -> plus d'à-coup stop/repart.
     }
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   });
@@ -597,9 +611,11 @@
       }
       startAction('chop', tree, tree.cr + PR + 20); return;
     }
-    // 3) déplacement normal
+    // 3) déplacement : cap DIRECT si la ligne est dégagée (fluide, garde l'élan),
+    // sinon A* pour contourner les obstacles.
     pendingAction = null;
-    navPath = findPath(player.x, player.y, mx, my); navI = 0; goActive = !!navPath;
+    if (lineClear(player.x, player.y, mx, my)) { navPath = [{ x: mx, y: my }]; navI = 0; goActive = true; }
+    else { navPath = findPath(player.x, player.y, mx, my); navI = 0; goActive = !!navPath; }
   }
 
   // Arbre sous le point monde (mx,my) : dans les bornes du sprite, le plus au
@@ -699,6 +715,14 @@
   }
   canvas.addEventListener('pointerup', onPointerEnd);
   canvas.addEventListener('pointercancel', onPointerEnd);
+  // Zoom molette (desktop / browser) : même bornes que le pinch mobile.
+  canvas.addEventListener('wheel', function (e) {
+    if (!started) return;
+    e.preventDefault();
+    zoom *= Math.exp(-e.deltaY * 0.0015);
+    if (zoom < ZOOM_MIN) zoom = ZOOM_MIN;
+    if (zoom > ZOOM_MAX) zoom = ZOOM_MAX;
+  }, { passive: false });
 
   var titleEl = document.getElementById('title');
   document.getElementById('ver').textContent = 'v' + VERSION;
@@ -869,6 +893,18 @@
     return path;
   }
   // Renvoie une liste de waypoints monde (lissée), ou null si pas de chemin.
+  // Ligne dégagée entre deux points (aucun tronc/rocher sur le chemin) ->
+  // on peut viser tout droit au lieu de passer par A* (déplacement fluide).
+  function lineClear(x0, y0, x1, y1) {
+    for (var i = 0; i < decos.length; i++) {
+      var dco = decos[i]; if (dco.dead || !dco.cr) continue;
+      var vx = x1 - x0, vy = y1 - y0, wx = dco.x - x0, wy = dco.y - y0;
+      var L2 = vx * vx + vy * vy || 1, t = Math.max(0, Math.min(1, (wx * vx + wy * vy) / L2));
+      var px = x0 + t * vx, py = y0 + t * vy;
+      if (Math.hypot(dco.x - px, dco.y - py) < dco.cr + PR + 4) return false;
+    }
+    return true;
+  }
   function findPath(sx, sy, tx, ty) {
     var sc = w2c(sx), sr = w2r(sy);
     var gc = w2c(tx), gr = w2r(ty);
@@ -959,7 +995,7 @@
         // une pomme visible tombe à chaque coup (s'il en reste)
         if (tr.apples > 0) {
           tr.apples--; pickedApples[tr.id] = (pickedApples[tr.id] || 0) + 1;
-          spawnApple(tr.x, tr.y - TARGET_H.tree * tr.s * 0.55);
+          spawnApple(tr.x, tr.y + 6, TARGET_H.tree * tr.s * 0.5); // tombe DEVANT l'arbre, depuis la canopée
         }
         // pitch + volume variés à chaque coup ; le coup FATAL = le plus fort + le plus aigu.
         var pitch = fell ? 1.28 : (0.88 + Math.random() * 0.26);
@@ -1115,6 +1151,40 @@
       gturtle.step += gsp * dt;
       if (gturtle.step >= 42) { gturtle.step -= 42; walkerStep(gturtle); }
     } else { gturtle.phase += dt * 1.2; }
+
+    // robot : marche robotique + veille "bloc" (se replie, standby, se redéploie).
+    robot.stateT -= dt; robot.blink += dt;
+    if (robot.state === 'walk') {
+      robot.fold += (0 - robot.fold) * Math.min(1, dt * 6);
+      robot.retarget -= dt;
+      if (robot.retarget <= 0) {
+        robot.retarget = 2 + Math.random() * 3;
+        var rra = Math.random() * Math.PI * 2, rrd = 160 + Math.random() * 320;
+        var rnx = robot.x + Math.cos(rra) * rrd, rny = robot.y + Math.sin(rra) * rrd;
+        if (!isWater(rnx, rny)) { robot.tx = rnx; robot.ty = rny; }
+      }
+      var rvx = robot.tx - robot.x, rvy = robot.ty - robot.y, rvd = Math.hypot(rvx, rvy);
+      if (rvd > 6 && robot.fold < 0.4) {
+        var rsp = 30;
+        robot.x += (rvx / rvd) * rsp * dt; robot.y += (rvy / rvd) * rsp * dt;
+        if (Math.abs(rvx) > 2) robot.face = rvx < 0 ? -1 : 1;
+        robot.phase += dt * 6;
+        robot.step += rsp * dt;
+        if (robot.step >= 48) { robot.step -= 48; walkerStep(robot); }
+      }
+      if (robot.stateT <= 0) { robot.state = 'block'; robot.stateT = 3 + Math.random() * 4; }
+    } else { // veille / bloc
+      robot.fold += (1 - robot.fold) * Math.min(1, dt * 5);
+      if (robot.stateT <= 0) { robot.state = 'walk'; robot.stateT = 4 + Math.random() * 5; robot.retarget = 0; }
+    }
+    if (Math.hypot(robot.x - player.x, robot.y - player.y) > 1900) {
+      var rba = Math.random() * Math.PI * 2;
+      for (var rbi = 0; rbi < 8; rbi++) {
+        var rbx = player.x + Math.cos(rba) * (860 + Math.random() * 400), rby = player.y + Math.sin(rba) * (860 + Math.random() * 400);
+        if (!isWater(rbx, rby)) { robot.x = rbx; robot.y = rby; robot.tx = rbx; robot.ty = rby; break; }
+        rba += 1.4;
+      }
+    }
 
     // ambiances environnementales : de temps en temps, un souffle de vent ou des oiseaux.
     if (AC && T >= ambNextT) { ambNextT = T + 14 + Math.random() * 24; playAmbient(); }
@@ -1671,6 +1741,43 @@
     ctx.restore();
   }
 
+  // Robot humanoïde : marche raide (robotique) ; `fold` 0->1 = se replie en BLOC (veille).
+  function drawRobot(mo, sx, sy) {
+    if (!IMG.rob_body || !IMG.rob_body.complete || !IMG.rob_body.naturalWidth) return;
+    var p = mo.phase, s = mo.sz, f = mo.fold, walk = 1 - f;
+    var sw = walk * 0.5, legA = Math.sin(p) * sw, legB = Math.sin(p + Math.PI) * sw;
+    var bob = walk * Math.abs(Math.sin(p)) * 1.0;
+    function part(key, ax, ay, th, ang, base) {
+      var im = IMG[key]; if (!im || !im.complete || !im.naturalWidth) return;
+      var hh = th * s, ww = hh * (im.naturalWidth / im.naturalHeight);
+      ctx.save(); ctx.translate(ax * s, ay * s); ctx.rotate(ang || 0);
+      if (base) ctx.drawImage(im, -ww / 2, -hh, ww, hh); else ctx.drawImage(im, -ww / 2, 0, ww, hh);
+      ctx.restore();
+    }
+    ctx.save(); ctx.globalAlpha = 0.16; ctx.fillStyle = '#3c5028';
+    ctx.beginPath(); ctx.ellipse(sx, sy, (13 - f * 2) * s, 5 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+
+    ctx.save();
+    ctx.translate(sx, sy);
+    if (mo.face < 0) ctx.scale(-1, 1);
+    // jambes : se rétractent (plus courtes + pivot qui remonte) quand replié
+    var legLen = 20 - f * 12, legPivY = -12 + f * 5;
+    part('rob_legR', 5, legPivY, legLen, legB);           // jambe droite (arrière)
+    part('rob_legL', -5, legPivY, legLen, legA);          // jambe gauche (avant)
+    // bras : balancement -> rabattus contre le corps quand bloc
+    var armA = 0.15 + f * 0.95;
+    part('rob_armL', -11 + f * 5, -25 + f * 4, 15 - f * 3, -armA + legB * 0.6);
+    part('rob_body', 0, -10 + bob - f * 2, 22 - f * 1, 0, true);
+    part('rob_armR', 11 - f * 5, -25 + f * 4, 15 - f * 3, armA + legA * 0.6);
+    // tête : s'enfonce dans le corps quand replié
+    part('rob_head', 0, -30 + bob * 1.1 + f * 10, 23 - f * 2, 0, true);
+    // LED d'état : verte en marche, rouge clignotante en veille
+    var freq = mo.state === 'block' ? 2.4 : 6, on = (Math.floor(mo.blink * freq) % 2) === 0;
+    ctx.fillStyle = mo.state === 'block' ? (on ? '#ff5a4a' : '#5c1712') : (on ? '#7ff0a0' : '#2f6a3e');
+    ctx.beginPath(); ctx.arc(0, (-37 + bob + f * 10) * s, 2.6 * s, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   // 1er monstre d'Elaijah : anim d'idle (respiration + dandinement + balancement).
   function drawMonster(sx, sy) {
     var im = IMG.monster;
@@ -1926,6 +2033,7 @@
     items.push({ y: panther.y, sx: panther.x - cam.x, sy: panther.y - cam.y, panther: true });
     items.push({ y: turtle.y, sx: turtle.x - cam.x, sy: turtle.y - cam.y, turtle: true });
     items.push({ y: gturtle.y, sx: gturtle.x - cam.x, sy: gturtle.y - cam.y, gturtle: true });
+    items.push({ y: robot.y, sx: robot.x - cam.x, sy: robot.y - cam.y, robot: true });
     for (var wi = 0; wi < walkers.length; wi++) { items.push({ y: walkers[wi].y, sx: walkers[wi].x - cam.x, sy: walkers[wi].y - cam.y, walker: walkers[wi] }); }
     items.sort(function (a, b) { return a.y - b.y; });
     for (var j = 0; j < items.length; j++) {
@@ -1940,6 +2048,7 @@
       else if (it.panther) drawPanther(panther, it.sx, it.sy);
       else if (it.turtle) drawTurtle(turtle, it.sx, it.sy);
       else if (it.gturtle) drawGreenTurtle(gturtle, it.sx, it.sy);
+      else if (it.robot) drawRobot(robot, it.sx, it.sy);
       else if (it.walker) drawWalker(it.walker, it.sx, it.sy);
       else drawSprite(it.deco, it.sx, it.sy);
     }
