@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.40.0';
+  var VERSION = '0.40.1';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -487,7 +487,7 @@
   // pas d'un monstre : pitch random + volume SPATIALISÉ (lié à la distance au joueur).
   function walkerStep(mo) {
     var d = Math.hypot(player.x - mo.x, player.y - mo.y);
-    var vol = (1 - d / 620) * 0.25;  // max abaissé de 50% (Charlie) ; > ~620 px = inaudible
+    var vol = (1 - d / 620) * 0.13;  // max abaissé de 50% (Charlie) ; > ~620 px = inaudible
     if (vol <= 0.02) return;
     playSound('mstep', 0.82 + Math.random() * 0.38, vol);
   }
