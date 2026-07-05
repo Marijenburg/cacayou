@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.39.1';
+  var VERSION = '0.40.0';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -351,6 +351,7 @@
   function eatApple() {
     if (appleCount <= 0) return;
     appleCount--; eating = 0.6;
+    playSound('applebite', 0.94 + Math.random() * 0.22, 0.9); // son "manger la pomme" (joueur)
     spawnAppleBits(player.x, player.y - 24, 9);
     floater('yum', player.x, player.y - 50);
   }
@@ -407,7 +408,7 @@
   var AC = null, footParity = false;
   var waterBuf = null, waterSrc = null, waterGain = null; // boucle sonore du bateau (remplace les pas)
   var snoreBuf = null, snoreSrc = null, snoreGain = null; // boucle de ronflement (dans la tente)
-  var SFX = { step: 'assets/step.mp3', axe: 'assets/sfx_axe.mp3', treehit: 'assets/sfx_treehit.mp3', leaves: 'assets/sfx_leaves.mp3', treefall: 'assets/sfx_treefall.mp3', mstep: 'assets/sfx_mstep.mp3' };
+  var SFX = { step: 'assets/step.mp3', axe: 'assets/sfx_axe.mp3', treehit: 'assets/sfx_treehit.mp3', leaves: 'assets/sfx_leaves.mp3', treefall: 'assets/sfx_treefall.mp3', mstep: 'assets/sfx_mstep.mp3', ball: 'assets/sfx_ball.mp3', applebite: 'assets/sfx_apple.mp3', pickup: 'assets/sfx_pickup.mp3' };
   var sfxBuf = {};
   var ambBuf = {};            // ambiances environnementales (vent / oiseaux)
   var ambNextT = 1e9;         // prochain déclenchement d'ambiance (s)
@@ -818,7 +819,7 @@
     if (a.type === 'pickup') {
       hasAxe = true; axe.picked = true;
       floater('Axe picked up', player.x, player.y - 46);
-      playSound('axe', 1.0, 0.5);
+      playSound('pickup', 0.98 + Math.random() * 0.12, 0.7); // ramassage (n'importe quoi qu'on ramasse)
     } else if (a.type === 'chop') {
       startSwing(a.target);
     } else if (a.type === 'sleep') {
@@ -830,6 +831,7 @@
       if (appleCount > 0 && a.target) {
         appleCount--;
         a.target.eat = 1.5;      // la créature s'arrête et mange pendant ce temps
+        playSound('applebite', 0.88 + Math.random() * 0.28, 0.8); // meme son de repas pour toutes les créatures, pitch varié
         a.target.follow = 10;    // puis elle nous suit un moment (rafraîchi à chaque pomme)
         a.target.idle = 'none'; a.target.idleT = 0; // réveil si elle dormait/idle
         a.target.bonded = true;  // apprivoisée : elle traînera désormais autour du camp
@@ -1390,10 +1392,11 @@
       if (bdd > 0.1) { kx = bdx / bdd; ky = bdy / bdd; } else { kx = player.facing.x; ky = player.facing.y; }
       ball.vx = kx * 340; ball.vy = ky * 340; ball.vz = 82;
       ball.vrot = (Math.random() < 0.5 ? -1 : 1) * 9; ball.kickCd = 0.2;
+      playSound('ball', 0.92 + Math.random() * 0.3, 0.85); // son de balle (Charlie+Elaijah), pitch varié au tap
     }
     if (ball.z > 0 || ball.vz !== 0) {
       ball.z += ball.vz * dt; ball.vz -= 320 * dt;
-      if (ball.z <= 0) { ball.z = 0; ball.vz = (ball.vz < -30) ? -ball.vz * 0.42 : 0; }
+      if (ball.z <= 0) { ball.z = 0; if (ball.vz < -30) { playSound('ball', 0.95 + Math.random() * 0.35, Math.min(0.55, -ball.vz / 200)); ball.vz = -ball.vz * 0.42; } else ball.vz = 0; }
     }
     ball.x += ball.vx * dt; ball.y += ball.vy * dt;
     var bfr = Math.pow(0.05, dt); ball.vx *= bfr; ball.vy *= bfr;
@@ -1457,7 +1460,7 @@
         lg.x += lg.vx * dt; lg.y += lg.vy * dt; lg.vx *= 0.88; lg.vy *= 0.88;
         if (lg.z <= 0) { lg.z = 0; lg.vz = 0; lg.grounded = true; }
       } else if (Math.hypot(player.x - lg.x, player.y - lg.y) < 30) {
-        logCount++; floater('+1 log', lg.x, lg.y - 22); logs.splice(li, 1);
+        logCount++; floater('+1 log', lg.x, lg.y - 22); logs.splice(li, 1); playSound('pickup', 0.96 + Math.random() * 0.16, 0.7);
       }
     }
 
@@ -1469,7 +1472,7 @@
         ga.x += ga.vx * dt; ga.y += ga.vy * dt; ga.vx *= 0.9; ga.vy *= 0.9;
         if (ga.z <= 0) { ga.z = 0; ga.vz = 0; ga.grounded = true; }
       } else if (Math.hypot(player.x - ga.x, player.y - ga.y) < 28) {
-        appleCount++; floater('+1 apple', ga.x, ga.y - 22); spawnAppleBits(ga.x, ga.y - 6, 6); groundApples.splice(gai, 1);
+        appleCount++; floater('+1 apple', ga.x, ga.y - 22); spawnAppleBits(ga.x, ga.y - 6, 6); groundApples.splice(gai, 1); playSound('pickup', 0.96 + Math.random() * 0.16, 0.7);
       }
     }
     if (eating > 0) eating -= dt;
