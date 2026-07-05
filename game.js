@@ -8,7 +8,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '0.40.1';
+  var VERSION = '0.40.2';
 
   var canvas = document.getElementById('game');
   var ctx = canvas.getContext('2d');
@@ -351,7 +351,7 @@
   function eatApple() {
     if (appleCount <= 0) return;
     appleCount--; eating = 0.6;
-    playSound('applebite', 0.94 + Math.random() * 0.22, 0.9); // son "manger la pomme" (joueur)
+    playSound('applebite', 0.94 + Math.random() * 0.22, 0.5); // son "manger la pomme" (joueur)
     spawnAppleBits(player.x, player.y - 24, 9);
     floater('yum', player.x, player.y - 50);
   }
@@ -482,7 +482,7 @@
   }
   function playStep() {
     var base = footParity ? 1.06 : 0.95; footParity = !footParity; // pied G / D
-    playSound('step', base * (0.94 + Math.random() * 0.12), 0.5 + Math.random() * 0.35);
+    playSound('step', base * (0.94 + Math.random() * 0.12), 0.28 + Math.random() * 0.2);
   }
   // pas d'un monstre : pitch random + volume SPATIALISÉ (lié à la distance au joueur).
   function walkerStep(mo) {
@@ -831,7 +831,7 @@
       if (appleCount > 0 && a.target) {
         appleCount--;
         a.target.eat = 1.5;      // la créature s'arrête et mange pendant ce temps
-        playSound('applebite', 0.88 + Math.random() * 0.28, 0.8); // meme son de repas pour toutes les créatures, pitch varié
+        playSound('applebite', 0.88 + Math.random() * 0.28, 0.45); // meme son de repas pour toutes les créatures, pitch varié
         a.target.follow = 10;    // puis elle nous suit un moment (rafraîchi à chaque pomme)
         a.target.idle = 'none'; a.target.idleT = 0; // réveil si elle dormait/idle
         a.target.bonded = true;  // apprivoisée : elle traînera désormais autour du camp
